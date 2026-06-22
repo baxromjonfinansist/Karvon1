@@ -1,0 +1,13 @@
+Yuk Marketplace — Alembic migratsiyalari
+
+Yangi migratsiya yaratish:
+    alembic revision --autogenerate -m "tavsif"
+
+Migratsiyani qo'llash:
+    alembic upgrade head
+
+Orqaga qaytarish:
+    alembic downgrade -1
+
+Joriy holat:
+    alembic current

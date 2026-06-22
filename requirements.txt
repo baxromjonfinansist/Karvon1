@@ -1,0 +1,23 @@
+# Telegram bot framework
+aiogram==3.13.1
+
+# Database (async ORM + driver + migrations)
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+alembic==1.14.0
+
+# Configuration
+pydantic-settings==2.6.1
+python-dotenv==1.0.1
+
+# Cache & FSM storage
+redis==5.2.1
+
+# Kanal o'quvchi (ixtiyoriy — TELEGRAM_API_ID bo'lsa o'rnatish kerak)
+telethon==1.36.0
+
+# LLM parser (ixtiyoriy — OPENAI_API_KEY bo'lsa o'rnatish kerak)
+httpx==0.27.2
+
+# Testlar
+pytest==8.3.3
