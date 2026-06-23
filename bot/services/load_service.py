@@ -82,21 +82,26 @@ async def get_driver_deals(session: AsyncSession, driver: User) -> list[Deal]:
     return list(result.scalars().unique().all())
 
 
+def _norm_city(s: str) -> str:
+    """Apostrof variantlarini birlashtirib, birinchi harfni katta qiladi."""
+    s = (s or "").strip().replace("’", "'").replace("ʼ", "'").replace("`", "'")
+    return s[:1].upper() + s[1:].lower() if s else s
+
+
 async def get_or_create_route(
     session: AsyncSession, origin: str, destination: str
 ) -> Route:
+    origin = _norm_city(origin)
+    destination = _norm_city(destination)
     result = await session.execute(
         select(Route).where(
-            func.lower(Route.origin) == origin.strip().lower(),
-            func.lower(Route.destination) == destination.strip().lower(),
+            func.lower(Route.origin) == origin.lower(),
+            func.lower(Route.destination) == destination.lower(),
         )
     )
     route = result.scalar_one_or_none()
     if route is None:
-        route = Route(
-            origin=origin.strip().title(),
-            destination=destination.strip().title(),
-        )
+        route = Route(origin=origin, destination=destination)
         session.add(route)
         await session.flush()
     return route
@@ -129,6 +134,37 @@ async def get_provider_loads(session: AsyncSession, provider: User) -> list[Load
         .options(joinedload(Load.route))
         .where(Load.provider_id == provider.id)
         .order_by(Load.posted_at.desc())
+    )
+    return list(result.scalars().unique().all())
+
+
+async def get_origin_regions_with_open_loads(session: AsyncSession) -> list[tuple[str, int]]:
+    """Ochiq yuk bor viloyatlar (chiqish) va har biridagi yuklar soni.
+
+    Yuklar bo'limi menyusi viloyat bo'yicha — faqat yuk bor viloyatlar,
+    eng ko'p yuk borlari yuqorida.
+    """
+    result = await session.execute(
+        select(Route.origin, func.count(Load.id).label("cnt"))
+        .join(Load, Load.route_id == Route.id)
+        .where(Load.status == LoadStatus.open)
+        .group_by(Route.origin)
+        .order_by(func.count(Load.id).desc())
+    )
+    return [(row[0], row[1]) for row in result.all()]
+
+
+async def get_open_loads_by_origin(
+    session: AsyncSession, origin: str, limit: int = 10
+) -> list[Load]:
+    """Bitta viloyatdan (origin) chiqadigan ochiq yuklar (eng yangisidan)."""
+    result = await session.execute(
+        select(Load)
+        .options(joinedload(Load.route), joinedload(Load.provider))
+        .join(Route, Load.route_id == Route.id)
+        .where(Load.status == LoadStatus.open, Route.origin == origin)
+        .order_by(Load.posted_at.desc())
+        .limit(limit)
     )
     return list(result.scalars().unique().all())
 

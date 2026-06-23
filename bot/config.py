@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     ADMIN_ID: Optional[int] = None
 
+    # Test rejimi: True bo'lsa obuna talab qilinmaydi (hamma yuklarni ko'radi).
+    # Pulli qilish uchun .env da FREE_MODE=false qiling va botni qayta ishga tushiring.
+    FREE_MODE: bool = False
+
     # Telethon — kanal o'qish uchun user-account
     TELEGRAM_API_ID: int = 0
     TELEGRAM_API_HASH: str = ""

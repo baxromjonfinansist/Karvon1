@@ -6,26 +6,64 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Optional
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import Load, LoadStatus
 
-UZBEK_CITIES = [
-    "Toshkent", "Samarqand", "Buxoro", "Namangan", "Andijon",
-    "Farg'ona", "Nukus", "Qarshi", "Termiz", "Jizzax",
-    "Navoiy", "Urganch", "Guliston", "Sirdaryo", "Shahrisabz",
-]
+# Shahar/tuman variantlari (kichik harf) → kanonik lotin nomi.
+# Kirill va lotin variantlar bir xil kanonik nomга moslanadi —
+# shunda "Ташкент" va "Toshkent" bitta yo'nalish bo'ladi (bo'linmaydi).
+CITY_ALIASES = {
+    # 14 viloyat markazi + yirik shaharlar
+    "toshkent": "Toshkent", "tashkent": "Toshkent", "тошкент": "Toshkent", "ташкент": "Toshkent",
+    "samarqand": "Samarqand", "samarkand": "Samarqand", "самарканд": "Samarqand", "самарқанд": "Samarqand",
+    "buxoro": "Buxoro", "buhoro": "Buxoro", "бухоро": "Buxoro", "бухара": "Buxoro",
+    "namangan": "Namangan", "наманган": "Namangan",
+    "andijon": "Andijon", "andijan": "Andijon", "андижон": "Andijon", "андижан": "Andijon",
+    "farg'ona": "Farg'ona", "fargona": "Farg'ona", "fergana": "Farg'ona",
+    "фаргона": "Farg'ona", "фарғона": "Farg'ona", "фергана": "Farg'ona",
+    "nukus": "Nukus", "нукус": "Nukus",
+    "qarshi": "Qarshi", "karshi": "Qarshi", "қарши": "Qarshi", "карши": "Qarshi",
+    "termiz": "Termiz", "термиз": "Termiz", "термез": "Termiz",
+    "jizzax": "Jizzax", "jizzakh": "Jizzax", "jizax": "Jizzax", "жиззах": "Jizzax", "джизак": "Jizzax",
+    "navoiy": "Navoiy", "navoi": "Navoiy", "навоий": "Navoiy", "навои": "Navoiy",
+    "urganch": "Urganch", "urgench": "Urganch", "урганч": "Urganch", "ургенч": "Urganch",
+    "guliston": "Guliston", "gulistan": "Guliston", "гулистон": "Guliston", "гулистан": "Guliston",
+    "nurafshon": "Nurafshon", "нурафшон": "Nurafshon",
+    "xiva": "Xiva", "xeva": "Xiva", "хива": "Xiva",
+    # Tez-tez uchraydigan tuman/shaharchalar (yuk yo'nalishlarida)
+    "chirchiq": "Chirchiq", "чирчик": "Chirchiq",
+    "angren": "Angren", "ангрен": "Angren",
+    "olmaliq": "Olmaliq", "алмалык": "Olmaliq",
+    "bekobod": "Bekobod", "бекабад": "Bekobod",
+    "denov": "Denov", "денов": "Denov",
+    "qoqon": "Qo'qon", "qo'qon": "Qo'qon", "kokand": "Qo'qon", "коканд": "Qo'qon", "қўқон": "Qo'qon",
+    "marg'ilon": "Marg'ilon", "margilon": "Marg'ilon", "маргилан": "Marg'ilon",
+    "chust": "Chust", "чуст": "Chust",
+    "parkent": "Parkent", "паркент": "Parkent",
+    "kibray": "Kibray", "кибрай": "Kibray",
+    "oltiariq": "Oltiariq", "олтиарык": "Oltiariq",
+    "shahrisabz": "Shahrisabz", "шахрисабз": "Shahrisabz",
+    "quvasoy": "Quvasoy", "кувасай": "Quvasoy",
+    "yangiyer": "Yangiyer", "янгиер": "Yangiyer",
+    "guzar": "G'uzor", "g'uzor": "G'uzor", "guzor": "G'uzor",
+    "uchquduq": "Uchquduq", "учкудук": "Uchquduq",
+    "zarafshon": "Zarafshon", "зарафшан": "Zarafshon",
+}
 
 _WEIGHT_RE = re.compile(
-    r"(\d+[.,]?\d*)\s*(tonna|tonn|ton\b|t\b)",
+    r"(\d+[.,]?\d*)\s*(tonna|tona|tonn|ton|тонна|тон|tn|тн|т|t)\b",
     re.IGNORECASE,
 )
 _PRICE_RE = re.compile(
-    r"(\d[\d\s]{0,9}(?:[.,]\d+)?)\s*(so[`']?m|ming|mln|млн)",
+    r"(\d[\d\s]{0,9}(?:[.,]\d+)?)\s*(so[`']?m|so'm|sum|som|сум|сўм|сом|ming|минг|mln|млн)",
     re.IGNORECASE,
 )
-_PRICE_BARE_RE = re.compile(r"(\d{4,})")  # bare large numbers (>= 1000)
-_PHONE_RE = re.compile(r"\+?998\d{9}")
+# Faqat 4–8 raqamli sonlar narx bo'la oladi — 9 raqamli telefon raqamlari chiqib ketadi.
+_PRICE_BARE_RE = re.compile(r"\b(\d{4,8})\b")
+# Telefon: +998XXXXXXXXX yoki yalang 9 raqamli mahalliy raqam.
+_PHONE_RE = re.compile(r"\+?998\d{9}|\b\d{9}\b")
 _SEP_RE = re.compile(r"[-–—→/]")
 
 # Yuk turi kalit so'zlari → normallashtirilgan kategoriya.
@@ -93,11 +131,32 @@ class ParsedLoad:
 # ---------------------------------------------------------------------------
 
 def _find_city_in(text: str) -> Optional[str]:
+    """Matnda eng birinchi uchragan shaharning kanonik nomini qaytaradi."""
     tl = text.lower()
-    for city in UZBEK_CITIES:
-        if city.lower() in tl:
-            return city
-    return None
+    best_idx = None
+    best_city = None
+    for alias, canon in CITY_ALIASES.items():
+        idx = tl.find(alias)
+        if idx != -1 and (best_idx is None or idx < best_idx):
+            best_idx = idx
+            best_city = canon
+    return best_city
+
+
+def _ordered_cities(text: str) -> list:
+    """Matndagi shaharlar paydo bo'lish tartibida (kanonik, takrorsiz)."""
+    tl = text.lower()
+    hits = []
+    for alias, canon in CITY_ALIASES.items():
+        idx = tl.find(alias)
+        if idx != -1:
+            hits.append((idx, canon))
+    hits.sort()
+    out: list = []
+    for _, canon in hits:
+        if canon not in out:
+            out.append(canon)
+    return out
 
 
 def _extract_route(text: str):
@@ -111,20 +170,34 @@ def _extract_route(text: str):
         if o and d and o != d:
             return o, d
 
-    # Fall back: find all cities in order of appearance
-    tl = text.lower()
-    hits = []
-    for city in UZBEK_CITIES:
-        idx = tl.find(city.lower())
-        if idx != -1:
-            hits.append((idx, city))
-    hits.sort()
-    cities = [c for _, c in hits]
+    # Fall back: barcha shaharlar paydo bo'lish tartibida
+    cities = _ordered_cities(text)
     if len(cities) >= 2:
         return cities[0], cities[1]
     if len(cities) == 1:
         return cities[0], None
     return None, None
+
+
+_DEST_CUT_RE = re.compile(r"[🚛📦☎️👤💰📍🔹✅🟨🟥🟢⚡️•\d\n]")
+
+
+def extract_destination_freetext(text: str) -> Optional[str]:
+    """LORRY formati uchun: "ORIGIN -> DEST 🚛..." dan DEST ni ajratadi.
+
+    Ma'lum shaharlar ro'yxatiga bog'liq emas — har qanday shaharcha
+    (Kattako'rgon, Urgut...) ni ham oladi. Ajratgich (->, -, →) dan keyingi
+    matnni birinchi belgi/raqamgacha oladi.
+    """
+    m = _SEP_RE.search(text)
+    if not m:
+        return None
+    right = text[m.end():]
+    chunk = _DEST_CUT_RE.split(right, maxsplit=1)[0]
+    dest = chunk.strip(" \t-–—:>.,").strip()
+    if 2 <= len(dest) <= 25 and any(ch.isalpha() for ch in dest):
+        return dest[:1].upper() + dest[1:].lower()
+    return None
 
 
 def _extract_weight(text: str) -> Optional[float]:
@@ -191,8 +264,8 @@ def _extract_cargo_type(text: str) -> Optional[str]:
     cleaned = _WEIGHT_RE.sub("", cleaned)
     cleaned = _PRICE_RE.sub("", cleaned)
     cleaned = _PRICE_BARE_RE.sub("", cleaned)
-    for city in UZBEK_CITIES:
-        cleaned = re.sub(re.escape(city), "", cleaned, flags=re.IGNORECASE)
+    for alias in CITY_ALIASES:
+        cleaned = re.sub(re.escape(alias), "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"[-–—→/,;:+\d]+", " ", cleaned)
 
     tokens = [
@@ -312,8 +385,20 @@ async def save_parsed_load(
     raw_text: str,
     source_channel: str,
     auto_approve_threshold: float = 0.85,
-) -> Load:
+) -> Optional[Load]:
     from bot.services.load_service import get_or_create_route
+
+    # Dublikat (repost) — bir xil matnli faol yuk allaqachon bo'lsa, saqlamaymiz.
+    dup = await session.execute(
+        select(Load.id)
+        .where(
+            Load.raw_text == raw_text,
+            Load.status.in_([LoadStatus.open, LoadStatus.pending, LoadStatus.matched]),
+        )
+        .limit(1)
+    )
+    if dup.scalar_one_or_none() is not None:
+        return None
 
     route_id = None
     if parsed.origin and parsed.destination:

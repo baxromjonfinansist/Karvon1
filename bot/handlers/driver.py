@@ -13,7 +13,15 @@ from aiogram.types import (
     Message,
 )
 
-from bot.services.load_service import get_driver_deals, get_feed, get_load_detail, take_load
+
+from bot.config import settings
+from bot.services.load_service import (
+    get_driver_deals,
+    get_load_detail,
+    get_open_loads_by_origin,
+    get_origin_regions_with_open_loads,
+    take_load,
+)
 from bot.services.rating_service import (
     get_deal_for_rating,
     get_pending_ratings,
@@ -64,6 +72,26 @@ def _take_kb(load_id: int) -> InlineKeyboardMarkup:
     )
 
 
+def _take_confirm_kb(load_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(text="✅ Ha, olaman", callback_data=f"takeyes_{load_id}"),
+            InlineKeyboardButton(text="❌ Yo'q", callback_data=f"takeno_{load_id}"),
+        ]]
+    )
+
+
+def _regions_menu_kb(regions_with_counts) -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(
+            text=f"{origin} ({count})",
+            callback_data=f"region_{origin}",
+        )]
+        for origin, count in regions_with_counts
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 # ---------------------------------------------------------------------------
 # 📦 Yuklar — feed
 # ---------------------------------------------------------------------------
@@ -75,29 +103,54 @@ async def show_feed(message: Message, session: AsyncSession) -> None:
         await message.answer("Bu bo'lim faqat haydovchilar uchun.")
         return
 
-    if not await is_subscribed(session, user):
+    if not settings.FREE_MODE and not await is_subscribed(session, user):
         await message.answer(
             "❌ Obuna faol emas.\n\n"
             "/subscribe buyrug'ini yuboring yoki admin bilan bog'laning."
         )
         return
 
-    loads = await get_feed(session, user)
-    if not loads:
+    regions = await get_origin_regions_with_open_loads(session)
+    if not regions:
         await message.answer("Hozircha yuklar yo'q 🤷\n\nKeyinroq tekshiring.")
         return
 
-    await message.answer(f"📋 <b>{len(loads)} ta yuk topildi:</b>")
+    await message.answer(
+        "📋 <b>Viloyatni tanlang:</b>\n(qavs ichida — yuklar soni)",
+        reply_markup=_regions_menu_kb(regions),
+    )
+
+
+@router.callback_query(F.data.startswith("region_"))
+async def show_region_loads(callback: CallbackQuery, session: AsyncSession) -> None:
+    origin = callback.data.split("_", 1)[1]
+
+    user = await get_or_none(session, callback.from_user.id)
+    if not user or user.role not in _DRIVER_ROLES:
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+
+    if not settings.FREE_MODE and not await is_subscribed(session, user):
+        await callback.answer("❌ Obuna faol emas.", show_alert=True)
+        return
+
+    loads = await get_open_loads_by_origin(session, origin, limit=10)
+    if not loads:
+        await callback.answer("Bu viloyatda yuk qolmadi.", show_alert=True)
+        return
+
+    await callback.answer()
+    await callback.message.answer(f"📦 <b>{origin}</b> — {len(loads)} ta yuk:")
     for load in loads:
-        await message.answer(_fmt_load(load), reply_markup=_take_kb(load.id))
+        await callback.message.answer(_fmt_load(load), reply_markup=_take_kb(load.id))
 
 
 # ---------------------------------------------------------------------------
-# 🤝 Olish — callback
+# 🤝 Olish — 1-bosqich: tasdiq so'rash (yuk HALI band qilinmaydi)
 # ---------------------------------------------------------------------------
 
 @router.callback_query(F.data.startswith("take_"))
-async def take_load_cb(callback: CallbackQuery, session: AsyncSession, bot: Bot) -> None:
+async def take_load_cb(callback: CallbackQuery, session: AsyncSession) -> None:
     load_id = int(callback.data.split("_")[1])
 
     user = await get_or_none(session, callback.from_user.id)
@@ -105,7 +158,43 @@ async def take_load_cb(callback: CallbackQuery, session: AsyncSession, bot: Bot)
         await callback.answer("Ruxsat yo'q.", show_alert=True)
         return
 
-    if not await is_subscribed(session, user):
+    if not settings.FREE_MODE and not await is_subscribed(session, user):
+        await callback.answer("❌ Obuna faol emas.", show_alert=True)
+        return
+
+    load = await get_load_detail(session, load_id)
+    if not load:
+        await callback.answer("Yuk topilmadi.", show_alert=True)
+        return
+
+    if load.status != LoadStatus.open:
+        await callback.answer("❌ Bu yuk allaqachon band qilingan.", show_alert=True)
+        await callback.message.edit_reply_markup(reply_markup=None)
+        return
+
+    # Tasdiq so'raymiz — adashib bosishdan himoya
+    await callback.message.edit_text(
+        f"{_fmt_load(load)}\n\n"
+        f"❓ <b>Haqiqatan ham bu yukni olasizmi?</b>",
+        reply_markup=_take_confirm_kb(load_id),
+    )
+    await callback.answer()
+
+
+# ---------------------------------------------------------------------------
+# 🤝 Olish — 2-bosqich: tasdiqlandi → atomar band qilish
+# ---------------------------------------------------------------------------
+
+@router.callback_query(F.data.startswith("takeyes_"))
+async def take_confirm_cb(callback: CallbackQuery, session: AsyncSession, bot: Bot) -> None:
+    load_id = int(callback.data.split("_")[1])
+
+    user = await get_or_none(session, callback.from_user.id)
+    if not user or user.role not in _DRIVER_ROLES:
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+
+    if not settings.FREE_MODE and not await is_subscribed(session, user):
         await callback.answer("❌ Obuna faol emas.", show_alert=True)
         return
 
@@ -119,7 +208,10 @@ async def take_load_cb(callback: CallbackQuery, session: AsyncSession, bot: Bot)
     if deal is None:
         await session.rollback()
         await callback.answer("❌ Bu yuk allaqachon band qilingan.", show_alert=True)
-        await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.message.edit_text(
+            f"{_fmt_load(load)}\n\n❌ <i>Afsus, bu yuk allaqachon band qilingan.</i>",
+            reply_markup=None,
+        )
         return
 
     await session.commit()
@@ -149,6 +241,25 @@ async def take_load_cb(callback: CallbackQuery, session: AsyncSession, bot: Bot)
             )
         except TelegramAPIError:
             pass
+
+
+# ---------------------------------------------------------------------------
+# 🤝 Olish — bekor: tasdiqdan voz kechildi, yuk ochiq qoladi
+# ---------------------------------------------------------------------------
+
+@router.callback_query(F.data.startswith("takeno_"))
+async def take_decline_cb(callback: CallbackQuery, session: AsyncSession) -> None:
+    load_id = int(callback.data.split("_")[1])
+
+    load = await get_load_detail(session, load_id)
+    if load and load.status == LoadStatus.open:
+        # Asl ko'rinishni "Olish" tugmasi bilan tiklaymiz
+        await callback.message.edit_text(_fmt_load(load), reply_markup=_take_kb(load_id))
+    else:
+        await callback.message.edit_text(
+            "Bu yuk endi mavjud emas.", reply_markup=None
+        )
+    await callback.answer("Bekor qilindi.")
 
 
 # ---------------------------------------------------------------------------
