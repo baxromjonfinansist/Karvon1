@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, not_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -11,6 +12,29 @@ from db.models import (
     Deal, DealStatus, Load, LoadStatus,
     Route, User, UserRole, driver_preferred_routes,
 )
+
+# Yuk faqat shuncha daqiqa "yangi" hisoblanadi — undan eskisi ko'rsatilmaydi
+# va bazadan avtomatik o'chiriladi.
+FRESH_MINUTES = 10
+
+
+def _fresh_cutoff() -> datetime:
+    return datetime.utcnow() - timedelta(minutes=FRESH_MINUTES)
+
+
+async def delete_stale_loads(session: AsyncSession) -> int:
+    """10 daqiqadan eski, hali band qilinmagan (open/pending) yuklarni o'chiradi.
+
+    Matched/closed yuklar (bitimga bog'langan) tegilmaydi — FK buzilmaydi.
+    """
+    result = await session.execute(
+        delete(Load).where(
+            Load.status.in_([LoadStatus.open, LoadStatus.pending]),
+            Load.posted_at < _fresh_cutoff(),
+        )
+    )
+    await session.commit()
+    return result.rowcount or 0
 
 
 async def get_feed(session: AsyncSession, user: User) -> list[Load]:
@@ -147,22 +171,183 @@ async def get_origin_regions_with_open_loads(session: AsyncSession) -> list[tupl
     result = await session.execute(
         select(Route.origin, func.count(Load.id).label("cnt"))
         .join(Load, Load.route_id == Route.id)
-        .where(Load.status == LoadStatus.open)
+        .where(Load.status == LoadStatus.open, Load.posted_at >= _fresh_cutoff())
         .group_by(Route.origin)
         .order_by(func.count(Load.id).desc())
     )
     return [(row[0], row[1]) for row in result.all()]
 
 
-async def get_open_loads_by_origin(
-    session: AsyncSession, origin: str, limit: int = 10
-) -> list[Load]:
-    """Bitta viloyatdan (origin) chiqadigan ochiq yuklar (eng yangisidan)."""
+# Shahar/tuman -> viloyat. Manzillarni viloyat bo'yicha guruhlash uchun.
+# Kalitlar: kichik harf, to'g'ri apostrof ('). Xaritada yo'q manzil o'zicha
+# alohida guruh bo'ladi (hech qanday yuk yashirilmaydi).
+_REGION_OF = {
+    # Toshkent viloyati
+    "toshkent": "Toshkent", "chirchiq": "Toshkent", "angren": "Toshkent",
+    "olmaliq": "Toshkent", "bekobod": "Toshkent", "parkent": "Toshkent",
+    "kibray": "Toshkent", "nurafshon": "Toshkent", "yangiyo'l": "Toshkent",
+    "ohangaron": "Toshkent", "chinoz": "Toshkent",
+    # Sirdaryo
+    "sirdaryo": "Sirdaryo", "guliston": "Sirdaryo", "yangiyer": "Sirdaryo",
+    "xovos": "Sirdaryo", "shirin": "Sirdaryo", "boyovut": "Sirdaryo",
+    # Jizzax
+    "jizzax": "Jizzax", "gagarin": "Jizzax", "zomin": "Jizzax",
+    # Samarqand
+    "samarqand": "Samarqand", "kattaqo'rg'on": "Samarqand", "urgut": "Samarqand",
+    "bulung'ur": "Samarqand", "jomboy": "Samarqand",
+    # Qashqadaryo
+    "qashqadaryo": "Qashqadaryo", "qarshi": "Qashqadaryo", "shahrisabz": "Qashqadaryo",
+    "koson": "Qashqadaryo", "qamashi": "Qashqadaryo", "kitob": "Qashqadaryo",
+    "g'uzor": "Qashqadaryo", "muborak": "Qashqadaryo", "kasbi": "Qashqadaryo",
+    # Surxondaryo
+    "surxondaryo": "Surxondaryo", "termiz": "Surxondaryo", "denov": "Surxondaryo",
+    "sho'rchi": "Surxondaryo", "boysun": "Surxondaryo", "sherobod": "Surxondaryo",
+    "jarqo'rg'on": "Surxondaryo", "qumqo'rg'on": "Surxondaryo",
+    # Buxoro
+    "buxoro": "Buxoro", "g'ijduvon": "Buxoro", "kogon": "Buxoro",
+    "qorako'l": "Buxoro", "vobkent": "Buxoro",
+    # Navoiy
+    "navoiy": "Navoiy", "zarafshon": "Navoiy", "uchquduq": "Navoiy",
+    "karmana": "Navoiy", "nurota": "Navoiy",
+    # Xorazm
+    "xorazm": "Xorazm", "urganch": "Xorazm", "xiva": "Xorazm",
+    "gurlan": "Xorazm", "hazorasp": "Xorazm", "shovot": "Xorazm", "pitnak": "Xorazm",
+    # Qoraqalpog'iston
+    "qoraqalpog'iston": "Qoraqalpog'iston", "nukus": "Qoraqalpog'iston",
+    "qo'ng'irot": "Qoraqalpog'iston", "xo'jayli": "Qoraqalpog'iston",
+    "chimboy": "Qoraqalpog'iston", "beruniy": "Qoraqalpog'iston", "to'rtko'l": "Qoraqalpog'iston",
+    # Namangan
+    "namangan": "Namangan", "chust": "Namangan", "pop": "Namangan",
+    "chortoq": "Namangan", "uchqo'rg'on": "Namangan", "kosonsoy": "Namangan",
+    # Andijon
+    "andijon": "Andijon", "asaka": "Andijon", "xonobod": "Andijon",
+    "shahrixon": "Andijon", "qo'rg'ontepa": "Andijon", "marhamat": "Andijon",
+    # Farg'ona
+    "farg'ona": "Farg'ona", "qo'qon": "Farg'ona", "marg'ilon": "Farg'ona",
+    "quvasoy": "Farg'ona", "oltiariq": "Farg'ona", "rishton": "Farg'ona",
+    "bag'dod": "Farg'ona", "qo'shtepa": "Farg'ona", "quva": "Farg'ona",
+}
+
+
+def _region_key(dest: str) -> str:
+    return (dest or "").strip().lower().replace("’", "'").replace("ʼ", "'").replace("`", "'")
+
+
+def _dest_region(dest: str) -> str:
+    """Manzil shaharini viloyatga aylantiradi; topilmasa o'zini qaytaradi."""
+    return _REGION_OF.get(_region_key(dest), dest)
+
+
+async def get_destination_regions(
+    session: AsyncSession, origin: str
+) -> list[tuple[str, int]]:
+    """Chiqish viloyatidan boradigan manzillar viloyat bo'yicha guruhlangan.
+
+    Qaytaradi: [("Samarqand", 58), ("Qashqadaryo", 42), ...] — eng ko'pi yuqorida.
+    """
+    result = await session.execute(
+        select(Route.destination, func.count(Load.id))
+        .join(Load, Load.route_id == Route.id)
+        .where(
+            Load.status == LoadStatus.open,
+            Route.origin == origin,
+            Load.posted_at >= _fresh_cutoff(),
+        )
+        .group_by(Route.destination)
+    )
+    buckets: dict[str, int] = {}
+    for dest, cnt in result.all():
+        b = _dest_region(dest)
+        buckets[b] = buckets.get(b, 0) + cnt
+    return sorted(buckets.items(), key=lambda x: -x[1])
+
+
+async def get_selection_loads(
+    session: AsyncSession,
+    origin: str,
+    dest_region: str,
+    offset: int = 0,
+    limit: int = 10,
+) -> tuple[list[Load], bool]:
+    """Chiqish viloyati + borish viloyati bo'yicha yuklar (eng yangisidan).
+
+    offset/limit — sahifalash. Qaytaradi: (yuklar_sahifasi, yana_bormi).
+    """
     result = await session.execute(
         select(Load)
         .options(joinedload(Load.route), joinedload(Load.provider))
         .join(Route, Load.route_id == Route.id)
-        .where(Load.status == LoadStatus.open, Route.origin == origin)
+        .where(
+            Load.status == LoadStatus.open,
+            Route.origin == origin,
+            Load.posted_at >= _fresh_cutoff(),
+        )
+        .order_by(Load.posted_at.desc())
+    )
+    loads = [
+        l for l in result.scalars().unique().all()
+        if l.route and _dest_region(l.route.destination) == dest_region
+    ]
+    page = loads[offset:offset + limit]
+    has_more = len(loads) > offset + limit
+    return page, has_more
+
+
+def _vehicle_filter(vehicle: Optional[str]):
+    """Mashina turi bo'yicha filtr. "isuzu" -> matnda isuzu bor;
+    "fura" (standart) -> isuzu bo'lmagan hamma (raw_text bo'sh bo'lsa ham fura)."""
+    isuzu = Load.raw_text.ilike("%isuzu%")
+    if vehicle == "isuzu":
+        return isuzu
+    if vehicle == "fura":
+        return or_(Load.raw_text.is_(None), not_(isuzu))
+    return None
+
+
+async def get_vehicle_counts_by_origin(
+    session: AsyncSession, origin: str
+) -> list[tuple[str, int]]:
+    """Viloyatdagi ochiq yuklarni mashina turi bo'yicha sanaydi.
+
+    Qaytaradi: [("fura", 300), ("isuzu", 6)] — faqat yuk bor turlar.
+    """
+    base = (
+        select(func.count(Load.id))
+        .join(Route, Load.route_id == Route.id)
+        .where(
+            Load.status == LoadStatus.open,
+            Route.origin == origin,
+            Load.posted_at >= _fresh_cutoff(),
+        )
+    )
+    out: list[tuple[str, int]] = []
+    for veh in ("fura", "isuzu"):
+        n = (await session.execute(base.where(_vehicle_filter(veh)))).scalar() or 0
+        if n:
+            out.append((veh, n))
+    return out
+
+
+async def get_open_loads_by_origin(
+    session: AsyncSession, origin: str, vehicle: Optional[str] = None, limit: int = 10
+) -> list[Load]:
+    """Bitta viloyatdan (origin) chiqadigan ochiq yuklar (eng yangisidan).
+
+    vehicle berilsa ("fura"/"isuzu") — faqat shu turdagi yuklar.
+    """
+    conds = [
+        Load.status == LoadStatus.open,
+        Route.origin == origin,
+        Load.posted_at >= _fresh_cutoff(),
+    ]
+    vf = _vehicle_filter(vehicle)
+    if vf is not None:
+        conds.append(vf)
+    result = await session.execute(
+        select(Load)
+        .options(joinedload(Load.route), joinedload(Load.provider))
+        .join(Route, Load.route_id == Route.id)
+        .where(*conds)
         .order_by(Load.posted_at.desc())
         .limit(limit)
     )

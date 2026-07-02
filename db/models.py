@@ -191,6 +191,8 @@ class Load(Base):
     cargo_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     weight_t: Mapped[Optional[Decimal]] = mapped_column(Numeric(8, 2), nullable=True)
     price: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2), nullable=True)
+    contact_phone: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     risk_tier: Mapped[RiskTier] = mapped_column(Enum(RiskTier), server_default=RiskTier.standard.value)
     status: Mapped[LoadStatus] = mapped_column(Enum(LoadStatus), server_default=LoadStatus.pending.value)
     provider_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)

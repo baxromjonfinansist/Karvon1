@@ -16,12 +16,15 @@ from aiogram.types import (
 
 from bot.config import settings
 from bot.services.load_service import (
+    delete_stale_loads,
+    get_destination_regions,
     get_driver_deals,
     get_load_detail,
-    get_open_loads_by_origin,
     get_origin_regions_with_open_loads,
+    get_selection_loads,
     take_load,
 )
+from bot.services.parser_service import extract_price_line
 from bot.services.rating_service import (
     get_deal_for_rating,
     get_pending_ratings,
@@ -50,18 +53,19 @@ def _fmt_price(price) -> str:
 
 
 def _fmt_load(load) -> str:
+    """Haydovchiga ko'rsatiladigan yuk: yo'nalish, telefon, narx (bo'lsa), izoh."""
     route = (
         f"{load.route.origin} → {load.route.destination}" if load.route else "—"
     )
-    risk_map = {"premium_safe": "🟢", "standard": "🟡", "budget": "🔴"}
-    risk = risk_map.get(load.risk_tier.value, "🟡") if load.risk_tier else "🟡"
-    weight = f"{load.weight_t} t" if load.weight_t else "—"
-    return (
-        f"📦 <b>#{load.id} — {route}</b>\n"
-        f"Yuk: {load.cargo_type or '—'} | {weight}\n"
-        f"Narx: {_fmt_price(load.price)}\n"
-        f"Risk: {risk}"
-    )
+    phone = load.contact_phone or "—"
+    note = load.note or load.cargo_type or "—"
+    price = extract_price_line(load.raw_text or "")   # faqat yozilgan bo'lsa
+
+    lines = [f"🚚 <b>{route}</b>", f"📞 {phone}"]
+    if price:
+        lines.append(f"💰 {price}")
+    lines.append(f"📝 {note}")
+    return "\n".join(lines)
 
 
 def _take_kb(load_id: int) -> InlineKeyboardMarkup:
@@ -92,14 +96,66 @@ def _regions_menu_kb(regions_with_counts) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def _dest_menu_kb(origin: str, dests_with_counts) -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(
+            text=f"{region} ({count})",
+            callback_data=f"dst|{origin}|{region}",
+        )]
+        for region, count in dests_with_counts
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def _pager_kb(origin: str, region: str, offset: int, has_more: bool) -> InlineKeyboardMarkup | None:
+    row = []
+    if offset > 0:
+        row.append(InlineKeyboardButton(
+            text="◀️ Oldingi", callback_data=f"more|{origin}|{region}|{max(0, offset - 10)}"
+        ))
+    if has_more:
+        row.append(InlineKeyboardButton(
+            text="Keyingi ▶️", callback_data=f"more|{origin}|{region}|{offset + 10}"
+        ))
+    return InlineKeyboardMarkup(inline_keyboard=[row]) if row else None
+
+
+def _check_driver(user) -> bool:
+    return bool(user and user.role in _DRIVER_ROLES)
+
+
+async def _send_selection(
+    callback: CallbackQuery, session: AsyncSession,
+    origin: str, region: str, offset: int,
+) -> None:
+    """Chiqish→borish viloyati bo'yicha 10 ta yukni (eng yangisidan) yuboradi."""
+    loads, has_more = await get_selection_loads(session, origin, region, offset=offset, limit=10)
+    if not loads:
+        await callback.answer("Bu yo'nalishda boshqa yuk yo'q.", show_alert=True)
+        return
+
+    await callback.answer()
+    start, end = offset + 1, offset + len(loads)
+    await callback.message.answer(
+        f"📦 <b>{origin} → {region}</b>  ({start}–{end}-yuk, eng yangisidan):"
+    )
+    for load in loads:
+        await callback.message.answer(_fmt_load(load), reply_markup=_take_kb(load.id))
+
+    pager = _pager_kb(origin, region, offset, has_more)
+    if pager:
+        tail = "Yana yuklar bor 👇" if has_more else "Boshqa yuk yo'q."
+        await callback.message.answer(tail, reply_markup=pager)
+
+
 # ---------------------------------------------------------------------------
-# 📦 Yuklar — feed
+# 📦 Yuklar — feed: chiqish viloyati → borish viloyati → yuklar (sahifalangan)
 # ---------------------------------------------------------------------------
 
 @router.message(F.text == "📦 Yuklar")
 async def show_feed(message: Message, session: AsyncSession) -> None:
     user = await get_or_none(session, message.from_user.id)
-    if not user or user.role not in _DRIVER_ROLES:
+    if not _check_driver(user):
         await message.answer("Bu bo'lim faqat haydovchilar uchun.")
         return
 
@@ -110,39 +166,74 @@ async def show_feed(message: Message, session: AsyncSession) -> None:
         )
         return
 
+    await delete_stale_loads(session)  # 10 daqiqadan eski yuklarni tozalaymiz
+
     regions = await get_origin_regions_with_open_loads(session)
     if not regions:
         await message.answer("Hozircha yuklar yo'q 🤷\n\nKeyinroq tekshiring.")
         return
 
     await message.answer(
-        "📋 <b>Viloyatni tanlang:</b>\n(qavs ichida — yuklar soni)",
+        "📤 <b>Qayerdan?</b> Chiqish viloyatini tanlang:\n(qavs ichida — yuklar soni)",
         reply_markup=_regions_menu_kb(regions),
     )
 
 
 @router.callback_query(F.data.startswith("region_"))
-async def show_region_loads(callback: CallbackQuery, session: AsyncSession) -> None:
+async def show_destinations(callback: CallbackQuery, session: AsyncSession) -> None:
     origin = callback.data.split("_", 1)[1]
 
     user = await get_or_none(session, callback.from_user.id)
-    if not user or user.role not in _DRIVER_ROLES:
+    if not _check_driver(user):
         await callback.answer("Ruxsat yo'q.", show_alert=True)
         return
-
     if not settings.FREE_MODE and not await is_subscribed(session, user):
         await callback.answer("❌ Obuna faol emas.", show_alert=True)
         return
 
-    loads = await get_open_loads_by_origin(session, origin, limit=10)
-    if not loads:
+    await delete_stale_loads(session)
+
+    dests = await get_destination_regions(session, origin)
+    if not dests:
         await callback.answer("Bu viloyatda yuk qolmadi.", show_alert=True)
         return
 
     await callback.answer()
-    await callback.message.answer(f"📦 <b>{origin}</b> — {len(loads)} ta yuk:")
-    for load in loads:
-        await callback.message.answer(_fmt_load(load), reply_markup=_take_kb(load.id))
+    await callback.message.answer(
+        f"📥 <b>{origin}</b>dan qayerga? Borish viloyatini tanlang:",
+        reply_markup=_dest_menu_kb(origin, dests),
+    )
+
+
+@router.callback_query(F.data.startswith("dst|"))
+async def show_dest_loads(callback: CallbackQuery, session: AsyncSession) -> None:
+    _, origin, region = callback.data.split("|", 2)
+
+    user = await get_or_none(session, callback.from_user.id)
+    if not _check_driver(user):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+    if not settings.FREE_MODE and not await is_subscribed(session, user):
+        await callback.answer("❌ Obuna faol emas.", show_alert=True)
+        return
+
+    await delete_stale_loads(session)
+    await _send_selection(callback, session, origin, region, offset=0)
+
+
+@router.callback_query(F.data.startswith("more|"))
+async def show_more_loads(callback: CallbackQuery, session: AsyncSession) -> None:
+    _, origin, region, offset = callback.data.split("|", 3)
+
+    user = await get_or_none(session, callback.from_user.id)
+    if not _check_driver(user):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+    if not settings.FREE_MODE and not await is_subscribed(session, user):
+        await callback.answer("❌ Obuna faol emas.", show_alert=True)
+        return
+
+    await _send_selection(callback, session, origin, region, offset=int(offset))
 
 
 # ---------------------------------------------------------------------------
@@ -219,11 +310,9 @@ async def take_confirm_cb(callback: CallbackQuery, session: AsyncSession, bot: B
     route = (
         f"{load.route.origin} → {load.route.destination}" if load.route else "—"
     )
-    price_text = _fmt_price(deal.agreed_price)
     await callback.message.edit_text(
         f"✅ <b>Yuk olindi!</b>\n\n"
         f"Yo'nalish: {route}\n"
-        f"Narx: {price_text}\n"
         f"Bitim #{deal.id} yaratildi."
     )
     await callback.answer("Muvaffaqiyatli!")
@@ -235,7 +324,6 @@ async def take_confirm_cb(callback: CallbackQuery, session: AsyncSession, bot: B
                 load.provider.telegram_id,
                 f"🟢 <b>Yukingiz #{load.id} olindi!</b>\n\n"
                 f"Yo'nalish: {route}\n"
-                f"Narx: {price_text}\n"
                 f"Haydovchi: {user.full_name}"
                 + (f" ({user.phone})" if user.phone else ""),
             )

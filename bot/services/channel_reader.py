@@ -53,20 +53,22 @@ async def _build_topic_map(client, channel_id) -> dict:
     return region_by_topic
 
 
-async def _process_message(text: str, channel: str, region: Optional[str]) -> None:
+async def _process_message(
+    text: str, channel: str, region: Optional[str], posted_at=None
+) -> None:
     """Xabarni parse qilib, yo'nalish+telefon bo'lsa bazaga saqlaydi.
 
     Yo'nalish: origin = mavzu viloyati (region), destination = matndan.
-    Telefon majburiy — bo'lmasa saqlanmaydi.
+    Telefon majburiy — bo'lmasa saqlanmaydi. Narx umuman o'qilmaydi.
     """
     from bot.services.parser_service import (
         ParsedLoad,
         _extract_contact,
-        _extract_price,
         _extract_weight,
         extract_destination_freetext,
+        extract_note,
+        save_parsed_load,
     )
-    from bot.services.parser_service import save_parsed_load
 
     if not text or len(text.strip()) < 8:
         return
@@ -76,7 +78,7 @@ async def _process_message(text: str, channel: str, region: Optional[str]) -> No
         return
     origin = region
 
-    contact = _extract_contact(text)
+    contact = _extract_contact(text)  # normallashtirilgan: +998 XX XXX XX XX
     if not contact:
         return  # telefon yo'q -> tashlanadi
 
@@ -84,13 +86,17 @@ async def _process_message(text: str, channel: str, region: Optional[str]) -> No
     if not destination or destination == origin:
         return  # manzil yo'q yoki origin bilan bir xil -> tashlanadi
 
+    # Telegram post vaqtini naive UTC ga keltiramiz (bazadagi ustun naive).
+    if posted_at is not None and posted_at.tzinfo is not None:
+        posted_at = posted_at.replace(tzinfo=None)
+
     parsed = ParsedLoad(
         origin=origin,
         destination=destination,
         cargo_type=None,
         weight_t=_extract_weight(text),
-        price=_extract_price(text),
         contact=contact,
+        note=extract_note(text),
         confidence=1.0,  # yo'nalish + telefon bor — ishonchli
     )
 
@@ -98,6 +104,7 @@ async def _process_message(text: str, channel: str, region: Optional[str]) -> No
         load = await save_parsed_load(
             session, parsed, text, channel,
             auto_approve_threshold=settings.PARSER_AUTO_APPROVE_CONFIDENCE,
+            posted_at=posted_at,
         )
         if load is None:  # dublikat
             return
@@ -149,7 +156,7 @@ async def start_reader(_dp: object = None) -> None:
                 if m.id > max_id:
                     max_id = m.id
                 region = regions.get(_topic_id_of(m))
-                await _process_message(m.text or "", str(cid), region)
+                await _process_message(m.text or "", str(cid), region, m.date)
         except Exception as exc:
             log.error("Backfill xato [%s]: %s", cid, exc)
         last_ids[cid] = max_id
@@ -168,7 +175,7 @@ async def start_reader(_dp: object = None) -> None:
                     if m.id > last_ids.get(cid, 0):
                         last_ids[cid] = m.id
                     region = regions.get(_topic_id_of(m))
-                    await _process_message(m.text or "", str(cid), region)
+                    await _process_message(m.text or "", str(cid), region, m.date)
             except Exception as exc:
                 log.error("Polling xato [%s]: %s", cid, exc)
 

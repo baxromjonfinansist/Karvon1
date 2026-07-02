@@ -18,74 +18,31 @@ os.environ.setdefault("BOT_TOKEN", "test:token")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://u:p@localhost/db")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379")
 
-from bot.services.parser_service import parse_with_regex  # noqa: E402
+from bot.services.parser_service import (  # noqa: E402
+    extract_note,
+    normalize_phone,
+    parse_with_regex,
+)
 
 
-def test_full_load_high_confidence():
+# ---------------------------------------------------------------------------
+# Yo'nalish (route)
+# ---------------------------------------------------------------------------
+
+def test_route_dash_separator():
     r = parse_with_regex(
-        "Toshkent-Samarqand, 5 tonna, qurilish materiallari, 600ming, +998901234567"
+        "Toshkent-Samarqand, 5 tonna, qurilish materiallari, +998901234567"
     )
     assert r.origin == "Toshkent"
     assert r.destination == "Samarqand"
     assert r.weight_t == 5.0
-    assert r.price == 600_000
-    assert r.contact == "+998901234567"
-    assert r.cargo_type == "Qurilish materiallari"
-    assert r.confidence >= 0.7
 
 
-def test_arrow_separator():
-    r = parse_with_regex("Toshkent → Buxoro. Oziq-ovqat 3 t. Narx 500 000 som.")
+def test_route_arrow_separator():
+    r = parse_with_regex("Toshkent → Buxoro. Oziq-ovqat 3 t.")
     assert r.origin == "Toshkent"
     assert r.destination == "Buxoro"
     assert r.weight_t == 3.0
-    assert r.price == 500_000
-    assert r.cargo_type == "Oziq-ovqat"
-
-
-def test_mln_price():
-    r = parse_with_regex("Namangan Andijon 10tonna elektronika 1.5mln")
-    assert r.origin == "Namangan"
-    assert r.destination == "Andijon"
-    assert r.weight_t == 10.0
-    assert r.price == 1_500_000
-    assert r.cargo_type == "Elektronika"
-
-
-def test_phone_not_parsed_as_price():
-    # "kelishamiz" => narx yo'q; telefon raqami narx bo'lib qolmasligi kerak
-    r = parse_with_regex(
-        "Fura kerak Toshkentdan Qarshiga, sement 20t, kelishamiz, tel 998901112233"
-    )
-    assert r.price is None
-    assert r.contact == "998901112233"
-    assert r.weight_t == 20.0
-    assert r.cargo_type == "Qurilish materiallari"
-
-
-def test_ming_multiplier():
-    r = parse_with_regex("Jizzax-Navoiy paxta 8t 700ming")
-    assert r.price == 700_000
-    assert r.cargo_type == "Paxta"
-
-
-def test_decimal_weight_comma():
-    r = parse_with_regex("Buxoro-Termiz mebel 1,5 tonna 300ming")
-    assert r.weight_t == 1.5
-    assert r.cargo_type == "Mebel"
-
-
-def test_phone_with_plus():
-    r = parse_with_regex("Toshkent Nukus don 15t +998935554433")
-    assert r.contact == "+998935554433"
-    assert r.cargo_type == "Oziq-ovqat"
-
-
-def test_no_city_low_confidence():
-    r = parse_with_regex("Yuk bor, narxi kelishiladi")
-    assert r.origin is None
-    assert r.destination is None
-    assert r.confidence < 0.7
 
 
 def test_single_city_only():
@@ -94,31 +51,79 @@ def test_single_city_only():
     assert r.destination is None
 
 
-def test_cargo_keyword_muzlatilgan():
-    r = parse_with_regex("Andijon-Toshkent muzlatilgan gosht 12 tonna 2mln")
-    assert r.cargo_type == "Muzlatilgan mahsulot"
-    assert r.weight_t == 12.0
-    assert r.price == 2_000_000
+def test_no_city_low_confidence():
+    r = parse_with_regex("Yuk bor, kelishiladi")
+    assert r.origin is None
+    assert r.destination is None
+    assert r.confidence < 0.7
 
 
-def test_cargo_stopwords_filtered():
-    # Noma'lum yuk turi — stopword'lar ("narx", "tel") chiqib ketishi kerak
-    r = parse_with_regex("Toshkent-Samarqand pianino 2t narx 400ming tel +998901234567")
-    assert r.cargo_type is not None
-    assert "narx" not in r.cargo_type.lower()
-    assert "tel" not in r.cargo_type.lower()
-    assert "pianino" in r.cargo_type.lower()
+# ---------------------------------------------------------------------------
+# Telefon normalizatsiya — +998 XX XXX XX XX
+# ---------------------------------------------------------------------------
+
+def test_phone_with_plus():
+    assert normalize_phone("+998935554433") == "+998 93 555 44 33"
 
 
-def test_weight_kg_not_matched_as_weight():
-    # "t" yoki "tonna" bo'lmasa vazn topilmaydi (faqat tonna qo'llab-quvvatlanadi)
-    r = parse_with_regex("Toshkent-Buxoro qurilish 600ming +998901234567")
-    assert r.weight_t is None
-    assert r.price == 600_000
+def test_phone_bare_998():
+    assert normalize_phone("998901112233") == "+998 90 111 22 33"
+
+
+def test_phone_local_9_digits():
+    assert normalize_phone("901234567") == "+998 90 123 45 67"
+
+
+def test_phone_spaced_input():
+    assert normalize_phone("90 123 45 67") == "+998 90 123 45 67"
+
+
+def test_phone_invalid_returns_none():
+    assert normalize_phone("12345") is None
+    assert normalize_phone("") is None
+
+
+def test_contact_extracted_and_normalized():
+    r = parse_with_regex("Toshkent Nukus don 15t +998935554433")
+    assert r.contact == "+998 93 555 44 33"
+
+
+# ---------------------------------------------------------------------------
+# Izoh (note) — yuk turi/vazn/talab, narx va telefon chiqib ketadi
+# ---------------------------------------------------------------------------
+
+def test_note_has_cargo_and_weight():
+    note = extract_note("Toshkent → Farg'ona, Un 16 tonna, tent kerak, +998901234567")
+    assert note is not None
+    assert "un" in note.lower()
+    assert "16 tonna" in note.lower()
+    assert "tent" in note.lower()
+
+
+def test_note_excludes_phone_and_price():
+    note = extract_note("Toshkent-Samarqand paxta 8t 700ming +998901234567")
+    assert "998" not in note
+    assert "700" not in note
+    assert "paxta" in note.lower()
+
+
+def test_note_empty_for_bare_route():
+    # Faqat yo'nalish — izoh bo'sh bo'lishi mumkin
+    note = extract_note("Toshkent → Buxoro")
+    assert note is None or note == "" or "buxoro" not in (note or "").lower()
+
+
+# ---------------------------------------------------------------------------
+# Narx umuman parse qilinmaydi — ParsedLoad'da price maydoni yo'q
+# ---------------------------------------------------------------------------
+
+def test_no_price_field():
+    r = parse_with_regex("Toshkent-Samarqand 5t qurilish 600ming +998901234567")
+    assert not hasattr(r, "price")
 
 
 def test_confidence_range():
-    r = parse_with_regex("Toshkent-Samarqand 5t qurilish 600ming +998901234567")
+    r = parse_with_regex("Toshkent-Samarqand 5t qurilish +998901234567")
     assert 0.0 <= r.confidence <= 1.0
 
 
@@ -127,7 +132,6 @@ def test_empty_text():
     assert r.origin is None
     assert r.destination is None
     assert r.weight_t is None
-    assert r.price is None
     assert r.confidence == 0.0
 
 
