@@ -6,7 +6,13 @@ class DriverReg(StatesGroup):
     waiting_phone = State()
     waiting_vehicle_type = State()
     waiting_capacity = State()
-    waiting_routes = State()
+    waiting_pref_origin = State()
+    waiting_pref_destination = State()
+    waiting_notify = State()
+
+
+class FeedbackFlow(StatesGroup):
+    waiting_text = State()
 
 
 class ProviderReg(StatesGroup):

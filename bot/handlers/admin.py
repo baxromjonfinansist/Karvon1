@@ -19,6 +19,11 @@ from sqlalchemy.orm import joinedload
 
 from bot.config import settings
 from bot.services.load_service import get_driver_telegram_ids_for_route
+from bot.services.logist_service import (
+    add_logist_phone,
+    list_logist_phones,
+    remove_logist_phone,
+)
 from bot.services.user_service import get_or_none, grant_subscription
 from db.models import (
     Deal, DealStatus, Load, LoadStatus,
@@ -254,6 +259,79 @@ async def grant_sub(message: Message, session: AsyncSession, bot: Bot) -> None:
         )
     except TelegramAPIError:
         pass
+
+
+# ---------------------------------------------------------------------------
+# /logist — qo'lda logist ro'yxati (bu raqamdan kelgan yuk bazaga tushmaydi)
+#   /logist <raqam> [<raqam2> ...]   — qo'shish (bir nechta ham)
+#   /logist_del <raqam>              — o'chirish
+#   /logist_list                     — ro'yxat
+# ---------------------------------------------------------------------------
+
+@router.message(Command("logist"))
+async def cmd_logist(message: Message, session: AsyncSession) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        phones = await list_logist_phones(session)
+        await message.answer(
+            f"📋 <b>Qo'lda-logist ro'yxati:</b> {len(phones)} ta raqam.\n\n"
+            "➕ Qo'shish: <code>/logist +998901234567</code>\n"
+            "   (bir nechta raqamni birga tashlash mumkin)\n"
+            "➖ O'chirish: <code>/logist_del +998901234567</code>\n"
+            "📄 Ro'yxat: /logist_list"
+        )
+        return
+
+    tokens = parts[1].replace(",", " ").split()
+    added, skipped = [], []
+    for tok in tokens:
+        phone = await add_logist_phone(session, tok)
+        (added if phone else skipped).append(phone or tok)
+    await session.commit()
+
+    lines: list[str] = []
+    if added:
+        lines.append(f"✅ Logist ro'yxatiga qo'shildi ({len(added)} ta):")
+        lines += [f"  • <code>{p}</code>" for p in added]
+        lines.append("Bu raqamlardan kelgan yuklar endi hech qaysi kanaldan bazaga tushmaydi.")
+    if skipped:
+        lines.append(f"⚠️ Tushunilmadi: {', '.join(skipped[:5])}")
+    await message.answer("\n".join(lines) or "Hech narsa qo'shilmadi.")
+
+
+@router.message(Command("logist_del"))
+async def cmd_logist_del(message: Message, session: AsyncSession) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("Format: <code>/logist_del +998901234567</code>")
+        return
+    phone = await remove_logist_phone(session, parts[1].strip())
+    await session.commit()
+    if phone:
+        await message.answer(f"✅ Ro'yxatdan o'chirildi: <code>{phone}</code>")
+    else:
+        await message.answer("❌ Raqamni tushunib bo'lmadi.")
+
+
+@router.message(Command("logist_list"))
+async def cmd_logist_list(message: Message, session: AsyncSession) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    phones = await list_logist_phones(session)
+    if not phones:
+        await message.answer("📋 Qo'lda-logist ro'yxati bo'sh.")
+        return
+    lines = [f"📋 <b>Qo'lda-logist ({len(phones)} ta):</b>"]
+    for phone, note in phones[:100]:
+        lines.append(f"• <code>{phone}</code>" + (f" — {note}" if note else ""))
+    if len(phones) > 100:
+        lines.append(f"… va yana {len(phones) - 100} ta.")
+    await message.answer("\n".join(lines))
 
 
 # ---------------------------------------------------------------------------

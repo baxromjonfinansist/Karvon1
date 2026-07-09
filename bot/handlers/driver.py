@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from html import escape
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,9 +24,10 @@ from bot.services.load_service import (
     get_load_detail,
     get_origin_regions_with_open_loads,
     get_selection_loads,
+    get_vehicle_counts_by_origin,
     take_load,
 )
-from bot.services.parser_service import extract_price_line
+from bot.services.parser_service import extract_body
 from bot.services.rating_service import (
     get_deal_for_rating,
     get_pending_ratings,
@@ -53,19 +56,14 @@ def _fmt_price(price) -> str:
 
 
 def _fmt_load(load) -> str:
-    """Haydovchiga ko'rsatiladigan yuk: yo'nalish, telefon, narx (bo'lsa), izoh."""
+    """Shablon: 1-qator yo'nalish, 2-qator telefon, 3-qator manbadagi
+    barcha ma'lumot (yo'nalish va telefondan tashqari)."""
     route = (
         f"{load.route.origin} → {load.route.destination}" if load.route else "—"
     )
     phone = load.contact_phone or "—"
-    note = load.note or load.cargo_type or "—"
-    price = extract_price_line(load.raw_text or "")   # faqat yozilgan bo'lsa
-
-    lines = [f"🚚 <b>{route}</b>", f"📞 {phone}"]
-    if price:
-        lines.append(f"💰 {price}")
-    lines.append(f"📝 {note}")
-    return "\n".join(lines)
+    body = extract_body(load.raw_text or "", load.contact_phone) or load.note or load.cargo_type or "—"
+    return f"🚚 <b>{route}</b>\n📞 {phone}\n📝 {escape(body)}"
 
 
 def _take_kb(load_id: int) -> InlineKeyboardMarkup:
@@ -96,26 +94,42 @@ def _regions_menu_kb(regions_with_counts) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def _dest_menu_kb(origin: str, dests_with_counts) -> InlineKeyboardMarkup:
+_VEHICLE_LABELS = {"fura": "🚛 Fura", "isuzu": "🚚 Isuzu", "kichik": "🚐 Kichik (Porter/Labo)"}
+
+
+def _vehicle_menu_kb(origin: str, vehicle_counts) -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(
+            text=f"{_VEHICLE_LABELS.get(veh, veh)} ({count})",
+            callback_data=f"veh|{origin}|{veh}",
+        )]
+        for veh, count in vehicle_counts
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def _dest_menu_kb(origin: str, vehicle: str, dests_with_counts) -> InlineKeyboardMarkup:
     buttons = [
         [InlineKeyboardButton(
             text=f"{region} ({count})",
-            callback_data=f"dst|{origin}|{region}",
+            callback_data=f"dst|{origin}|{vehicle}|{region}",
         )]
         for region, count in dests_with_counts
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def _pager_kb(origin: str, region: str, offset: int, has_more: bool) -> InlineKeyboardMarkup | None:
+def _pager_kb(
+    origin: str, vehicle: str, region: str, offset: int, has_more: bool
+) -> InlineKeyboardMarkup | None:
     row = []
     if offset > 0:
         row.append(InlineKeyboardButton(
-            text="◀️ Oldingi", callback_data=f"more|{origin}|{region}|{max(0, offset - 10)}"
+            text="◀️ Oldingi", callback_data=f"more|{origin}|{vehicle}|{region}|{max(0, offset - 10)}"
         ))
     if has_more:
         row.append(InlineKeyboardButton(
-            text="Keyingi ▶️", callback_data=f"more|{origin}|{region}|{offset + 10}"
+            text="Keyingi ▶️", callback_data=f"more|{origin}|{vehicle}|{region}|{offset + 10}"
         ))
     return InlineKeyboardMarkup(inline_keyboard=[row]) if row else None
 
@@ -126,26 +140,45 @@ def _check_driver(user) -> bool:
 
 async def _send_selection(
     callback: CallbackQuery, session: AsyncSession,
-    origin: str, region: str, offset: int,
+    origin: str, vehicle: str, region: str, offset: int,
 ) -> None:
-    """Chiqish→borish viloyati bo'yicha 10 ta yukni (eng yangisidan) yuboradi."""
-    loads, has_more = await get_selection_loads(session, origin, region, offset=offset, limit=10)
+    """Chiqish viloyati+mashina turi+borish viloyati bo'yicha 10 ta yuk (eng yangisidan)."""
+    loads, has_more = await get_selection_loads(
+        session, origin, region, vehicle=vehicle, offset=offset, limit=10
+    )
     if not loads:
         await callback.answer("Bu yo'nalishda boshqa yuk yo'q.", show_alert=True)
         return
 
     await callback.answer()
+    label = _VEHICLE_LABELS.get(vehicle, vehicle)
     start, end = offset + 1, offset + len(loads)
     await callback.message.answer(
-        f"📦 <b>{origin} → {region}</b>  ({start}–{end}-yuk, eng yangisidan):"
+        f"📦 <b>{origin} → {region}</b> {label} ({start}–{end}-yuk, eng yangisidan):"
     )
     for load in loads:
         await callback.message.answer(_fmt_load(load), reply_markup=_take_kb(load.id))
 
-    pager = _pager_kb(origin, region, offset, has_more)
+    pager = _pager_kb(origin, vehicle, region, offset, has_more)
     if pager:
         tail = "Yana yuklar bor 👇" if has_more else "Boshqa yuk yo'q."
         await callback.message.answer(tail, reply_markup=pager)
+
+
+async def _show_dest_menu(
+    callback: CallbackQuery, session: AsyncSession, origin: str, vehicle: str
+) -> None:
+    """Mashina turi tanlangandan keyin — borish viloyati menyusi."""
+    dests = await get_destination_regions(session, origin, vehicle=vehicle)
+    if not dests:
+        await callback.answer("Bu turda yuk qolmadi.", show_alert=True)
+        return
+    await callback.answer()
+    label = _VEHICLE_LABELS.get(vehicle, vehicle)
+    await callback.message.answer(
+        f"📥 <b>{origin}</b> {label} — qayerga? Borish viloyatini tanlang:",
+        reply_markup=_dest_menu_kb(origin, vehicle, dests),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +213,7 @@ async def show_feed(message: Message, session: AsyncSession) -> None:
 
 
 @router.callback_query(F.data.startswith("region_"))
-async def show_destinations(callback: CallbackQuery, session: AsyncSession) -> None:
+async def show_vehicle_menu(callback: CallbackQuery, session: AsyncSession) -> None:
     origin = callback.data.split("_", 1)[1]
 
     user = await get_or_none(session, callback.from_user.id)
@@ -193,21 +226,26 @@ async def show_destinations(callback: CallbackQuery, session: AsyncSession) -> N
 
     await delete_stale_loads(session)
 
-    dests = await get_destination_regions(session, origin)
-    if not dests:
+    vehicle_counts = await get_vehicle_counts_by_origin(session, origin)
+    if not vehicle_counts:
         await callback.answer("Bu viloyatda yuk qolmadi.", show_alert=True)
+        return
+
+    # Bitta mashina turi bo'lsa — menyusiz to'g'ridan-to'g'ri borish viloyati.
+    if len(vehicle_counts) == 1:
+        await _show_dest_menu(callback, session, origin, vehicle_counts[0][0])
         return
 
     await callback.answer()
     await callback.message.answer(
-        f"📥 <b>{origin}</b>dan qayerga? Borish viloyatini tanlang:",
-        reply_markup=_dest_menu_kb(origin, dests),
+        f"🚚 <b>{origin}</b> — mashina turini tanlang:",
+        reply_markup=_vehicle_menu_kb(origin, vehicle_counts),
     )
 
 
-@router.callback_query(F.data.startswith("dst|"))
-async def show_dest_loads(callback: CallbackQuery, session: AsyncSession) -> None:
-    _, origin, region = callback.data.split("|", 2)
+@router.callback_query(F.data.startswith("veh|"))
+async def show_destinations(callback: CallbackQuery, session: AsyncSession) -> None:
+    _, origin, vehicle = callback.data.split("|", 2)
 
     user = await get_or_none(session, callback.from_user.id)
     if not _check_driver(user):
@@ -218,12 +256,12 @@ async def show_dest_loads(callback: CallbackQuery, session: AsyncSession) -> Non
         return
 
     await delete_stale_loads(session)
-    await _send_selection(callback, session, origin, region, offset=0)
+    await _show_dest_menu(callback, session, origin, vehicle)
 
 
-@router.callback_query(F.data.startswith("more|"))
-async def show_more_loads(callback: CallbackQuery, session: AsyncSession) -> None:
-    _, origin, region, offset = callback.data.split("|", 3)
+@router.callback_query(F.data.startswith("dst|"))
+async def show_dest_loads(callback: CallbackQuery, session: AsyncSession) -> None:
+    _, origin, vehicle, region = callback.data.split("|", 3)
 
     user = await get_or_none(session, callback.from_user.id)
     if not _check_driver(user):
@@ -233,7 +271,23 @@ async def show_more_loads(callback: CallbackQuery, session: AsyncSession) -> Non
         await callback.answer("❌ Obuna faol emas.", show_alert=True)
         return
 
-    await _send_selection(callback, session, origin, region, offset=int(offset))
+    await delete_stale_loads(session)
+    await _send_selection(callback, session, origin, vehicle, region, offset=0)
+
+
+@router.callback_query(F.data.startswith("more|"))
+async def show_more_loads(callback: CallbackQuery, session: AsyncSession) -> None:
+    _, origin, vehicle, region, offset = callback.data.split("|", 4)
+
+    user = await get_or_none(session, callback.from_user.id)
+    if not _check_driver(user):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+    if not settings.FREE_MODE and not await is_subscribed(session, user):
+        await callback.answer("❌ Obuna faol emas.", show_alert=True)
+        return
+
+    await _send_selection(callback, session, origin, vehicle, region, offset=int(offset))
 
 
 # ---------------------------------------------------------------------------
@@ -310,10 +364,11 @@ async def take_confirm_cb(callback: CallbackQuery, session: AsyncSession, bot: B
     route = (
         f"{load.route.origin} → {load.route.destination}" if load.route else "—"
     )
+    # Telefon o'chib qolmasligi uchun yuk matnini saqlaymiz, faqat "olindi" ikonka qo'shamiz.
     await callback.message.edit_text(
-        f"✅ <b>Yuk olindi!</b>\n\n"
-        f"Yo'nalish: {route}\n"
-        f"Bitim #{deal.id} yaratildi."
+        f"{_fmt_load(load)}\n\n"
+        f"✅ <b>Olindi</b> · Bitim #{deal.id}",
+        reply_markup=None,
     )
     await callback.answer("Muvaffaqiyatli!")
 

@@ -3,10 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import (
+    Load,
     Route,
     Subscription,
     SubscriptionPlan,
@@ -29,14 +30,37 @@ async def create_user(
     role: UserRole,
     full_name: str,
     phone: Optional[str],
+    notify_enabled: bool = False,
 ) -> User:
     user = User(
         telegram_id=telegram_id,
         role=role,
         full_name=full_name,
         phone=phone,
+        notify_enabled=notify_enabled,
     )
     session.add(user)
+    await session.flush()
+    return user
+
+
+async def update_user_role(
+    session: AsyncSession,
+    user: User,
+    role: UserRole,
+    full_name: str,
+    phone: Optional[str],
+    notify_enabled: bool = False,
+) -> User:
+    """Mavjud foydalanuvchining rolini almashtiradi (adashib boshqa rol tanlaganda).
+
+    Bitim/reyting tarixi (user.id o'zgarmaydi) saqlanib qoladi.
+    """
+    user.role = role
+    user.full_name = full_name
+    if phone:
+        user.phone = phone
+    user.notify_enabled = notify_enabled
     await session.flush()
     return user
 
@@ -123,7 +147,13 @@ async def grant_subscription(
 
 
 async def get_all_routes(session: AsyncSession) -> list[Route]:
-    result = await session.execute(select(Route).order_by(Route.id))
+    """Yo'nalishlar — eng ko'p yuk o'tganlari birinchi (ro'yxat sahifalanadi)."""
+    result = await session.execute(
+        select(Route)
+        .outerjoin(Load, Load.route_id == Route.id)
+        .group_by(Route.id)
+        .order_by(func.count(Load.id).desc(), Route.id)
+    )
     return list(result.scalars().all())
 
 

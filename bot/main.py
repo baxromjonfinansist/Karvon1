@@ -8,12 +8,18 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.redis import RedisStorage
-from aiogram.types import TelegramObject
+from aiogram.types import BotCommand, TelegramObject
 
 from bot.config import settings
-from bot.handlers import admin, driver, fallback, provider, start
+from bot.handlers import admin, driver, fallback, misc, provider, start
 from bot.handlers import settings as settings_handler
 from bot.services.channel_reader import start_reader, stop_reader
+from bot.services.notify_service import (
+    notify_loop,
+    reminder_loop,
+    stop_notify,
+    stop_reminder,
+)
 from bot.services.user_service import seed_default_routes
 from db.database import AsyncSessionLocal, engine
 
@@ -54,6 +60,12 @@ async def main() -> None:
         token=settings.BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
+
+    # Slash-buyruqlar menyusi ("/" bosilganda ko'rinadi) — keyin kengaytiriladi.
+    await bot.set_my_commands([
+        BotCommand(command="start", description="🤖 Botni qayta ishga tushirish"),
+    ])
+
     storage = RedisStorage.from_url(settings.REDIS_URL)
     dp = Dispatcher(storage=storage)
 
@@ -64,8 +76,15 @@ async def main() -> None:
     dp.include_router(provider.router)
     dp.include_router(admin.router)
     dp.include_router(settings_handler.router)
+    dp.include_router(misc.router)
     # Fallback (catch-all "Tushunarsiz buyruq") — DOIM eng oxirida bo'lishi shart
     dp.include_router(fallback.router)
+
+    # Yo'nalish bo'yicha avtomatik yuk xabarnomasi (har 10 daqiqada)
+    notify_task = asyncio.create_task(notify_loop(bot))
+
+    # Xabarnoma o'chiq haydovchilarga kunlik eslatma (08:30 va 20:30)
+    reminder_task = asyncio.create_task(reminder_loop(bot))
 
     log.info("Bot polling rejimida ishga tushmoqda...")
     try:
@@ -74,6 +93,10 @@ async def main() -> None:
         if reader_task:
             await stop_reader()
             reader_task.cancel()
+        stop_notify()
+        notify_task.cancel()
+        stop_reminder()
+        reminder_task.cancel()
         await engine.dispose()
         await bot.session.close()
         log.info("Bot to'xtatildi.")

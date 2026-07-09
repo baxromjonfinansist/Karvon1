@@ -3,7 +3,13 @@ from __future__ import annotations
 from aiogram import F, Router
 from aiogram.filters import CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Contact, Message
+from aiogram.types import (
+    CallbackQuery,
+    Contact,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.keyboards import (
@@ -11,16 +17,16 @@ from bot.keyboards import (
     main_menu_driver_kb,
     main_menu_provider_kb,
     phone_request_kb,
+    pref_viloyat_kb,
     remove_kb,
     role_choice_kb,
-    routes_kb,
     vehicle_type_kb,
 )
+from bot.services.load_service import get_ranked_viloyats
 from bot.services.user_service import (
     create_user,
-    get_all_routes,
     get_or_none,
-    set_preferred_routes,
+    update_user_role,
 )
 from bot.states import DriverReg, ProviderReg
 from db.models import UserRole, VehicleType
@@ -36,6 +42,7 @@ ROLE_MAP = {
 VEHICLE_TYPE_MAP = {
     "Isuzu": VehicleType.isuzu,
     "Fura": VehicleType.fura,
+    "Kichik (Porter/Labo)": VehicleType.kichik,
     "Boshqa": VehicleType.other,
 }
 
@@ -71,8 +78,12 @@ async def _send_main_menu(message: Message, role: UserRole) -> None:
 # /start
 # ---------------------------------------------------------------------------
 
-@router.message(CommandStart(), StateFilter(None))
+@router.message(CommandStart())
 async def cmd_start(message: Message, session: AsyncSession, state: FSMContext) -> None:
+    # /start har doim ishlashi kerak — hatto foydalanuvchi biror jarayonda
+    # (masalan yo'nalish tanlashda) "qotib qolgan" bo'lsa ham qutqaradi.
+    await state.clear()
+
     user = await get_or_none(session, message.from_user.id)
     if user:
         await _send_main_menu(message, user.role)
@@ -187,60 +198,98 @@ async def driver_capacity(message: Message, state: FSMContext, session: AsyncSes
         return
 
     await state.update_data(capacity_t=capacity)
+    await state.set_state(DriverReg.waiting_pref_origin)
 
-    routes = await get_all_routes(session)
-    await state.update_data(selected_routes=[])
-    await state.set_state(DriverReg.waiting_routes)
+    viloyats = await get_ranked_viloyats(session)
     await message.answer(
-        "Siz ishlashni afzal ko'rgan yo'nalishlarni tanlang.\n"
-        "Bir nechta tanlashingiz mumkin, tugagach «✅ Tayyor» bosing:",
-        reply_markup=routes_kb(routes, []),
+        "📍 <b>Eng aktual yo'nalishingiz</b>\n\n"
+        "Qaysi viloyatdan yuk olasiz? (eng ko'p yuk chiqadigan joylar yuqorida):",
+        reply_markup=pref_viloyat_kb(viloyats, "prego"),
     )
 
 
-@router.callback_query(DriverReg.waiting_routes, F.data.startswith("route_"))
-async def driver_route_toggle(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
-    route_id = int(callback.data.split("_")[1])
-    data = await state.get_data()
-    selected: list[int] = data.get("selected_routes", [])
+@router.callback_query(DriverReg.waiting_pref_origin, F.data.startswith("prego_"))
+async def driver_pref_origin(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    origin = callback.data.split("_", 1)[1]
+    await state.update_data(pref_origin=origin)
+    await state.set_state(DriverReg.waiting_pref_destination)
 
-    if route_id in selected:
-        selected.remove(route_id)
-    else:
-        selected.append(route_id)
-
-    await state.update_data(selected_routes=selected)
-
-    routes = await get_all_routes(session)
-    await callback.message.edit_reply_markup(reply_markup=routes_kb(routes, selected))
+    viloyats = await get_ranked_viloyats(session, origin_filter=origin)
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer(
+        f"📍 <b>{origin}</b>dan qayerga olib borasiz?\n"
+        "(Ikkala yo'nalish bo'yicha ham xabarnoma keladi — masalan "
+        f"{origin}→X va X→{origin}):",
+        reply_markup=pref_viloyat_kb(viloyats, "predst"),
+    )
     await callback.answer()
 
 
-@router.callback_query(DriverReg.waiting_routes, F.data == "routes_done")
-async def driver_routes_done(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+def _notify_ask_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🔔 Ha, xabar bering", callback_data="notify_yes"),
+        InlineKeyboardButton(text="🔕 Yo'q", callback_data="notify_no"),
+    ]])
+
+
+@router.callback_query(DriverReg.waiting_pref_destination, F.data.startswith("predst_"))
+async def driver_pref_destination(callback: CallbackQuery, state: FSMContext) -> None:
+    destination = callback.data.split("_", 1)[1]
+    await state.update_data(pref_destination=destination)
+    await state.set_state(DriverReg.waiting_notify)
+
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer(
+        "🔔 <b>Xabarnoma</b>\n\n"
+        "Shu yo'nalishga yangi yuk kelsa, sizga avtomatik xabar yuboraylikmi? "
+        "(Keyin ⚙️ Sozlamalarda o'zgartirishingiz mumkin)",
+        reply_markup=_notify_ask_kb(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(DriverReg.waiting_notify, F.data.in_(["notify_yes", "notify_no"]))
+async def driver_notify_choice(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    notify = callback.data == "notify_yes"
     data = await state.get_data()
 
-    user = await create_user(
-        session,
-        telegram_id=callback.from_user.id,
-        role=UserRole(data["role"]),
-        full_name=data["full_name"],
-        phone=data.get("phone"),
-    )
+    if data.get("reregister"):
+        user = await get_or_none(session, callback.from_user.id)
+        user = await update_user_role(
+            session, user,
+            role=UserRole(data["role"]),
+            full_name=data["full_name"],
+            phone=data.get("phone"),
+            notify_enabled=notify,
+        )
+    else:
+        user = await create_user(
+            session,
+            telegram_id=callback.from_user.id,
+            role=UserRole(data["role"]),
+            full_name=data["full_name"],
+            phone=data.get("phone"),
+            notify_enabled=notify,
+        )
 
-    selected_routes = data.get("selected_routes", [])
-    if selected_routes:
-        await set_preferred_routes(session, user, selected_routes)
+    user.pref_origin = data.get("pref_origin")
+    user.pref_destination = data.get("pref_destination")
 
     await session.commit()
     await state.clear()
 
+    notify_line = (
+        "🔔 Xabarnoma yoqildi — yangi yuklar avtomatik keladi."
+        if notify else
+        "🔕 Xabarnoma o'chiq — ⚙️ Sozlamalardan yoqishingiz mumkin."
+    )
     await callback.message.edit_reply_markup(reply_markup=None)
     await callback.message.answer(
         f"✅ Ro'yxatdan o'tdingiz!\n\n"
         f"Ism: {user.full_name}\n"
         f"Rol: Haydovchi\n"
-        f"Tanlangan yo'nalishlar: {len(selected_routes)} ta\n\n"
+        f"Yo'nalish: {user.pref_origin} ↔ {user.pref_destination}\n"
+        f"{notify_line}\n\n"
         f"Asosiy menyu:",
         reply_markup=main_menu_driver_kb(),
     )
@@ -291,13 +340,22 @@ async def _finish_provider_reg(
 ) -> None:
     data = await state.get_data()
 
-    user = await create_user(
-        session,
-        telegram_id=message.from_user.id,
-        role=UserRole(data["role"]),
-        full_name=data["full_name"],
-        phone=phone,
-    )
+    if data.get("reregister"):
+        user = await get_or_none(session, message.from_user.id)
+        user = await update_user_role(
+            session, user,
+            role=UserRole(data["role"]),
+            full_name=data["full_name"],
+            phone=phone,
+        )
+    else:
+        user = await create_user(
+            session,
+            telegram_id=message.from_user.id,
+            role=UserRole(data["role"]),
+            full_name=data["full_name"],
+            phone=phone,
+        )
     await session.commit()
     await state.clear()
 

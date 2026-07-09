@@ -5,7 +5,7 @@ from typing import Optional
 
 from sqlalchemy import (
     BigInteger, Boolean, Column, DateTime, Enum, ForeignKey,
-    Integer, Numeric, String, Table, Text, func,
+    Index, Integer, Numeric, String, Table, Text, func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -25,6 +25,7 @@ class UserRole(str, enum.Enum):
 
 
 class VehicleType(str, enum.Enum):
+    kichik = "kichik"   # Isuzudan kichik: Hyundai Porter, labo, damas
     isuzu = "isuzu"
     fura = "fura"
     other = "other"
@@ -114,6 +115,12 @@ class User(Base):
     sub_status: Mapped[SubscriptionStatus] = mapped_column(
         Enum(SubscriptionStatus), server_default=SubscriptionStatus.expired.value, nullable=False
     )
+    # Yo'nalish bo'yicha avtomatik yuk xabarnomasi (opt-in)
+    notify_enabled: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
+    last_notified_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # Eng aktual yo'nalish (viloyat juftligi, ikkala tomon bo'yicha xabarnoma keladi)
+    pref_origin: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    pref_destination: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     # Haydovchining tanlagan yo'nalishlari (feed filtri uchun)
@@ -193,6 +200,7 @@ class Load(Base):
     price: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2), nullable=True)
     contact_phone: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    vehicle_type: Mapped[Optional[VehicleType]] = mapped_column(Enum(VehicleType), nullable=True)
     risk_tier: Mapped[RiskTier] = mapped_column(Enum(RiskTier), server_default=RiskTier.standard.value)
     status: Mapped[LoadStatus] = mapped_column(Enum(LoadStatus), server_default=LoadStatus.pending.value)
     provider_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
@@ -275,3 +283,56 @@ class Rating(Base):
         "User", foreign_keys=[to_user_id], back_populates="ratings_received"
     )
     deal: Mapped["Deal"] = relationship("Deal", back_populates="ratings")
+
+
+class Feedback(Base):
+    __tablename__ = "feedbacks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class LorryListing(Base):
+    """LORRY guruhi e'lonlari TARIXI — logist aniqlash (route diversity) uchun.
+
+    Yuk feed'idan (`loads`) alohida: bu jadval 12+ soat saqlanadi (Load 60
+    daqiqada o'chadi). Maqsad — bitta telefondan oxirgi 12 soatda nechta
+    TURLI yo'nalish chiqqanini sanash. Har bir LORRY xabari (logist bo'lsa
+    ham) shu yerga yoziladi; faqat `loads` bazasiga logist tushmaydi.
+    """
+    __tablename__ = "lorry_listings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    phone_norm: Mapped[str] = mapped_column(String(20), nullable=False, index=True)  # +998XXXXXXXXX
+    origin_canon: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    dest_canon: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    source_group: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    classification: Mapped[str] = mapped_column(String(20), server_default="cargo", nullable=False)
+    raw_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # dublikat repostni sanamaslik uchun
+    posted_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True, server_default=func.now())
+
+    __table_args__ = (
+        # 12 soatlik window query (phone + vaqt) tez ishlashi uchun composite index.
+        Index("ix_lorry_phone_posted", "phone_norm", "posted_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<LorryListing {self.phone_norm} {self.origin_canon}->{self.dest_canon} {self.classification}>"
+
+
+class LogistBlocklist(Base):
+    """Qo'lda belgilangan logist telefonlari (admin qarori — algoritmdan ustun).
+
+    Bu ro'yxatdagi raqamdan kelgan yuk HECH QAYSI kanaldan yuk bazasiga
+    tushmaydi. Admin `/logist` buyrug'i bilan qo'shadi/o'chiradi.
+    """
+    __tablename__ = "logist_blocklist"
+
+    phone_norm: Mapped[str] = mapped_column(String(20), primary_key=True)  # +998XXXXXXXXX
+    note: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    def __repr__(self) -> str:
+        return f"<LogistBlocklist {self.phone_norm}>"

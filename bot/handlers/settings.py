@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 from aiogram import F, Router
-from aiogram.types import Message
+from aiogram.fsm.context import FSMContext
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from bot.keyboards import role_choice_kb
 from bot.services.user_service import (
     get_active_subscription,
     get_or_none,
@@ -20,6 +27,17 @@ _ROLE_LABELS = {
     UserRole.staff_driver: "👤 Mashinasiz haydovchi",
     UserRole.admin: "👨‍💼 Admin",
 }
+
+_DRIVER_ROLES = {UserRole.driver, UserRole.asset_owner, UserRole.staff_driver}
+
+
+def _profile_kb(user) -> InlineKeyboardMarkup:
+    rows = []
+    if user.role in _DRIVER_ROLES:
+        label = "🔕 Xabarnomani o'chirish" if user.notify_enabled else "🔔 Xabarnomani yoqish"
+        rows.append([InlineKeyboardButton(text=label, callback_data="toggle_notify")])
+    rows.append([InlineKeyboardButton(text="🔄 Rolni o'zgartirish", callback_data="change_role")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 @router.message(F.text == "⚙️ Sozlamalar")
@@ -45,12 +63,79 @@ async def show_profile(message: Message, session: AsyncSession) -> None:
     else:
         sub_line = "❌ Faol emas"
 
+    notify_line = ""
+    if user.role in _DRIVER_ROLES:
+        notify_line = (
+            f"\n🔔 Xabarnoma: {'yoniq' if user.notify_enabled else 'o‘chiq'}"
+        )
+
     await message.answer(
         "⚙️ <b>Mening profilim</b>\n\n"
         f"👤 Ism: {user.full_name}\n"
         f"📞 Telefon: {phone}\n"
         f"🎭 Rol: {role_label}\n"
         f"⭐ Reyting: {rating}\n"
-        f"💳 Obuna: {sub_line}\n"
-        f"🆔 Telegram ID: <code>{user.telegram_id}</code>"
+        f"💳 Obuna: {sub_line}"
+        f"{notify_line}\n"
+        f"🆔 Telegram ID: <code>{user.telegram_id}</code>",
+        reply_markup=_profile_kb(user),
     )
+
+
+@router.callback_query(F.data == "remind_enable")
+async def remind_enable(callback: CallbackQuery, session: AsyncSession) -> None:
+    """Kunlik eslatmadagi «🔔 Xabarnomani yoqish» tugmasi."""
+    user = await get_or_none(session, callback.from_user.id)
+    if not user:
+        await callback.answer("Avval /start bosing.", show_alert=True)
+        return
+    if not user.notify_enabled:
+        user.notify_enabled = True
+        await session.commit()
+    # Tugmani "✅ Yoqildi" holatiga o'zgartiramiz — vizual tasdiq.
+    await callback.message.edit_reply_markup(
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="✅ Xabarnoma yoqildi", callback_data="notify_noop")
+        ]])
+    )
+    # Tepada bir marta yonib o'chadigan ogohlantirish (modal emas — toast).
+    await callback.answer("🔔 Xabarnoma yondi")
+
+
+@router.callback_query(F.data == "notify_noop")
+async def notify_noop(callback: CallbackQuery) -> None:
+    """Allaqachon yoqilgan tugma — qayta bosilsa faqat qisqa eslatma."""
+    await callback.answer("🔔 Xabarnoma allaqachon yoqilgan")
+
+
+@router.callback_query(F.data == "toggle_notify")
+async def toggle_notify(callback: CallbackQuery, session: AsyncSession) -> None:
+    user = await get_or_none(session, callback.from_user.id)
+    if not user:
+        await callback.answer("Avval /start bosing.", show_alert=True)
+        return
+    user.notify_enabled = not user.notify_enabled
+    await session.commit()
+    await callback.message.edit_reply_markup(reply_markup=_profile_kb(user))
+    await callback.answer(
+        "🔔 Xabarnoma yondi" if user.notify_enabled else "🔕 Xabarnoma o'chdi"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 🔄 Rolni o'zgartirish — adashib boshqa rol tanlaganlar uchun
+# ---------------------------------------------------------------------------
+
+@router.callback_query(F.data == "change_role")
+async def change_role_start(callback: CallbackQuery, state: FSMContext) -> None:
+    # Haqiqiy FSM state o'rnatilmaydi (None qoladi) — shu bilan mavjud
+    # ro'yxatdan o'tish oqimi (role_chosen, StateFilter(None)) qayta ishlaydi.
+    # "reregister" belgisi state ma'lumotida saqlanib, oxirida yangi user
+    # yaratish o'rniga mavjudini yangilash uchun ishlatiladi.
+    await state.update_data(reregister=True)
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer(
+        "🔄 <b>Rolni o'zgartirish</b>\n\nYangi rolingizni tanlang:",
+        reply_markup=role_choice_kb(),
+    )
+    await callback.answer()

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional
-
 from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -9,8 +7,6 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
 )
-
-from db.models import Route
 
 
 def role_choice_kb() -> ReplyKeyboardMarkup:
@@ -28,7 +24,8 @@ def vehicle_type_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="Isuzu"), KeyboardButton(text="Fura")],
-            [KeyboardButton(text="Boshqa"), KeyboardButton(text="⬅️ Orqaga")],
+            [KeyboardButton(text="Kichik (Porter/Labo)"), KeyboardButton(text="Boshqa")],
+            [KeyboardButton(text="⬅️ Orqaga")],
         ],
         resize_keyboard=True,
         one_time_keyboard=True,
@@ -43,13 +40,16 @@ def phone_request_kb() -> ReplyKeyboardMarkup:
     )
 
 
-def routes_kb(routes: list[Route], selected_ids: Optional[list[int]] = None) -> InlineKeyboardMarkup:
-    selected_ids = selected_ids or []
-    buttons = []
-    for route in routes:
-        label = f"{'✅ ' if route.id in selected_ids else ''}{route.origin}→{route.destination}"
-        buttons.append([InlineKeyboardButton(text=label, callback_data=f"route_{route.id}")])
-    buttons.append([InlineKeyboardButton(text="✅ Tayyor", callback_data="routes_done")])
+def pref_viloyat_kb(viloyats_with_counts, prefix: str) -> InlineKeyboardMarkup:
+    """Ro'yxatdan o'tishda «eng aktual yo'nalish» tanlash — viloyatlar, yuk soni bilan."""
+    buttons = [
+        [InlineKeyboardButton(
+            text=f"{v} ({count})" if count else v,
+            callback_data=f"{prefix}_{v}",
+        )]
+        for v, count in viloyats_with_counts
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -58,6 +58,8 @@ def main_menu_driver_kb() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="📦 Yuklar"), KeyboardButton(text="💳 Obunam")],
             [KeyboardButton(text="📋 Bitimlarim"), KeyboardButton(text="⚙️ Sozlamalar")],
+            [KeyboardButton(text="💬 Fikr-mulohaza"), KeyboardButton(text="📞 Murojaat")],
+            [KeyboardButton(text="🏠 Asosiy bo'lim")],
         ],
         resize_keyboard=True,
     )
@@ -68,6 +70,8 @@ def main_menu_provider_kb() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="➕ Yuk joylash"), KeyboardButton(text="📦 Mening yuklarim")],
             [KeyboardButton(text="⚙️ Sozlamalar")],
+            [KeyboardButton(text="💬 Fikr-mulohaza"), KeyboardButton(text="📞 Murojaat")],
+            [KeyboardButton(text="🏠 Asosiy bo'lim")],
         ],
         resize_keyboard=True,
     )

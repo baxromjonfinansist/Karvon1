@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     # Kuzatiladigan kanal ID lari, vergul bilan: -1001234567,-1009876543
     CHANNEL_IDS: str = ""
 
+    # LORRY (ichki tashuvlar) guruhi — logist aniqlash FAQAT shu kanallarda ishlaydi.
+    # Boshqa kanallar: hamma real client -> yuklar to'g'ridan bazaga tushadi.
+    # Bo'sh bo'lsa — logist aniqlash o'chiq.
+    LORRY_CHANNEL_IDS: str = ""
+
     # OpenAI (ixtiyoriy — bo'sh bo'lsa faqat regex ishlatiladi)
     OPENAI_API_KEY: str = ""
 
@@ -40,6 +45,15 @@ class Settings(BaseSettings):
             return []
         try:
             return [int(x.strip()) for x in self.CHANNEL_IDS.split(",") if x.strip()]
+        except ValueError:
+            return []
+
+    @property
+    def lorry_channel_ids_list(self) -> List[int]:
+        if not self.LORRY_CHANNEL_IDS:
+            return []
+        try:
+            return [int(x.strip()) for x in self.LORRY_CHANNEL_IDS.split(",") if x.strip()]
         except ValueError:
             return []
 

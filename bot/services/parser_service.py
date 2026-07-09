@@ -10,7 +10,7 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import Load, LoadStatus
+from db.models import Load, LoadStatus, VehicleType
 
 # Shahar/tuman variantlari (kichik harf) → kanonik lotin nomi.
 # Kirill va lotin variantlar bir xil kanonik nomга moslanadi —
@@ -51,7 +51,138 @@ CITY_ALIASES = {
     "guzar": "G'uzor", "g'uzor": "G'uzor", "guzor": "G'uzor",
     "uchquduq": "Uchquduq", "учкудук": "Uchquduq",
     "zarafshon": "Zarafshon", "зарафшан": "Zarafshon",
+    # Imlo/lahja variantlari (guruhlarda tez uchraydi)
+    "toshken": "Toshkent", "тошкен": "Toshkent", "towkent": "Toshkent", "тошкан": "Toshkent",
+    "кукон": "Qo'qon", "куқон": "Qo'qon", "qoqan": "Qo'qon",
+    "bekabod": "Bekobod", "бекобод": "Bekobod", "bekobot": "Bekobod",
+    "маргилон": "Marg'ilon", "marģilon": "Marg'ilon",
+    # Viloyat nomlari (shahar emas — matnda viloyat yozilsa ham tushunish uchun)
+    "sirdaryo": "Sirdaryo", "сирдарё": "Sirdaryo", "сырдарья": "Sirdaryo",
+    "surxondaryo": "Surxondaryo", "сурхондарё": "Surxondaryo", "surxondaryo'": "Surxondaryo",
+    "сурхандарья": "Surxondaryo", "сурхандар": "Surxondaryo",
+    "xorazm": "Xorazm", "horazm": "Xorazm", "хоразм": "Xorazm", "хорезм": "Xorazm",
+    "qashqadaryo": "Qashqadaryo", "кашкадарё": "Qashqadaryo", "қашқадарё": "Qashqadaryo",
+    "кашкадарья": "Qashqadaryo",
+    "qoraqalpog": "Qoraqalpog'iston", "коракалпог": "Qoraqalpog'iston",
+    "қорақалпоғ": "Qoraqalpog'iston", "каракалпак": "Qoraqalpog'iston",
+    # Toshkent viloyati tumanlari
+    "sergeli": "Sergeli", "sergili": "Sergeli", "сергели": "Sergeli", "сергили": "Sergeli",
+    "piskent": "Piskent", "пискент": "Piskent",
+    "bo'ka": "Bo'ka", "boka": "Bo'ka", "бука": "Bo'ka", "бўка": "Bo'ka",
+    "chinoz": "Chinoz", "чиноз": "Chinoz",
+    "ohangaron": "Ohangaron", "охангарон": "Ohangaron", "ахангаран": "Ohangaron",
+    "yangiyo'l": "Yangiyo'l", "yangiyul": "Yangiyo'l", "янгийул": "Yangiyo'l", "янгийўл": "Yangiyo'l",
+    "keles": "Keles", "келес": "Keles",
+    # Farg'ona viloyati
+    "rishton": "Rishton", "риштон": "Rishton",
+    "beshariq": "Beshariq", "бешарик": "Beshariq", "бешариқ": "Beshariq",
+    "buvayda": "Buvayda", "бувайда": "Buvayda",
+    "bog'dod": "Bog'dod", "bogdod": "Bog'dod", "богдод": "Bog'dod", "боғдод": "Bog'dod",
+    "yozyovon": "Yozyovon", "ёзёвон": "Yozyovon",
+    "quva": "Quva", "қува": "Quva", "кува": "Quva",
+    "uchko'prik": "Uchko'prik", "uchkuprik": "Uchko'prik", "учкуприк": "Uchko'prik",
+    # Andijon viloyati
+    "shahrixon": "Shahrixon", "shaxrixon": "Shahrixon", "шахрихон": "Shahrixon",
+    "asaka": "Asaka", "асака": "Asaka",
+    "xonobod": "Xonobod", "хонобод": "Xonobod",
+    "paxtaobod": "Paxtaobod", "пахтаобод": "Paxtaobod",
+    "xo'jaobod": "Xo'jaobod", "xujaobod": "Xo'jaobod", "хужаобод": "Xo'jaobod", "хўжаобод": "Xo'jaobod",
+    "qorasuv": "Qorasuv", "корасув": "Qorasuv", "қорасув": "Qorasuv",
+    "marhamat": "Marhamat", "мархамат": "Marhamat",
+    # Namangan viloyati
+    "chortoq": "Chortoq", "чорток": "Chortoq", "чортоқ": "Chortoq", "chortoq'": "Chortoq",
+    "kosonsoy": "Kosonsoy", "косонсой": "Kosonsoy",
+    "norin": "Norin", "норин": "Norin",
+    "uchqo'rg'on": "Uchqo'rg'on", "uchkurgan": "Uchqo'rg'on", "учкурган": "Uchqo'rg'on",
+    "to'raqo'rg'on": "To'raqo'rg'on", "turakurgan": "To'raqo'rg'on", "туракурган": "To'raqo'rg'on",
+    "pop tumani": "Pop", "попдан": "Pop", "popdan": "Pop",
+    # Samarqand viloyati
+    "urgut": "Urgut", "ургут": "Urgut",
+    "kattaqo'rg'on": "Kattaqo'rg'on", "kattakurgan": "Kattaqo'rg'on",
+    "каттакургон": "Kattaqo'rg'on", "каттақўрғон": "Kattaqo'rg'on", "каттакурган": "Kattaqo'rg'on",
+    "jomboy": "Jomboy", "жомбой": "Jomboy",
+    "bulung'ur": "Bulung'ur", "bulungur": "Bulung'ur", "булунгур": "Bulung'ur",
+    # Buxoro viloyati
+    "g'ijduvon": "G'ijduvon", "gijduvon": "G'ijduvon", "гиждувон": "G'ijduvon",
+    "kogon": "Kogon", "когон": "Kogon", "kagan": "Kogon", "каган": "Kogon",
+    "qorako'l": "Qorako'l", "korakul": "Qorako'l", "коракул": "Qorako'l",
+    "vobkent": "Vobkent", "вобкент": "Vobkent",
+    # Qashqadaryo viloyati
+    "koson": "Koson", "косон": "Koson",
+    "kitob": "Kitob", "китоб": "Kitob",
+    "muborak": "Muborak", "муборак": "Muborak",
+    "qamashi": "Qamashi", "камаши": "Qamashi", "қамаши": "Qamashi",
+    # Surxondaryo viloyati
+    "sho'rchi": "Sho'rchi", "shurchi": "Sho'rchi", "шурчи": "Sho'rchi", "шўрчи": "Sho'rchi",
+    "jarqo'rg'on": "Jarqo'rg'on", "jarkurgan": "Jarqo'rg'on", "жаркургон": "Jarqo'rg'on",
+    "boysun": "Boysun", "бойсун": "Boysun",
+    "qumqo'rg'on": "Qumqo'rg'on", "кумкургон": "Qumqo'rg'on",
+    "sherobod": "Sherobod", "шеробод": "Sherobod",
+    # Xorazm viloyati
+    "gurlan": "Gurlan", "гурлан": "Gurlan",
+    "xonqa": "Xonqa", "xonka": "Xonqa", "хонка": "Xonqa", "хонқа": "Xonqa",
+    "shovot": "Shovot", "шовот": "Shovot",
+    "hazorasp": "Hazorasp", "hazarasp": "Hazorasp", "хазорасп": "Hazorasp",
+    # Qoraqalpog'iston
+    "beruniy": "Beruniy", "беруний": "Beruniy",
+    "to'rtko'l": "To'rtko'l", "turtkul": "To'rtko'l", "турткул": "To'rtko'l", "тўрткўл": "To'rtko'l",
+    "qo'ng'irot": "Qo'ng'irot", "kungirot": "Qo'ng'irot", "кунгирот": "Qo'ng'irot",
+    "кунград": "Qo'ng'irot", "qo'ngg'irot": "Qo'ng'irot",
+    "xo'jayli": "Xo'jayli", "xujayli": "Xo'jayli", "ходжейли": "Xo'jayli", "хўжайли": "Xo'jayli",
+    "chimboy": "Chimboy", "чимбой": "Chimboy",
+    # Jizzax viloyati
+    "zomin": "Zomin", "зомин": "Zomin",
+    "paxtakor": "Paxtakor", "пахтакор": "Paxtakor",
+    "do'stlik": "Do'stlik", "dustlik": "Do'stlik", "дустлик": "Do'stlik",
+    "g'allaorol": "G'allaorol", "gallaorol": "G'allaorol", "галлаорол": "G'allaorol",
+    # Sirdaryo viloyati
+    "boyovut": "Boyovut", "боёвут": "Boyovut",
+    "xovos": "Xovos", "xavos": "Xovos", "ховос": "Xovos", "хавос": "Xovos",
+    # Navoiy viloyati
+    "nurota": "Nurota", "нурота": "Nurota",
+    "qiziltepa": "Qiziltepa", "кизилтепа": "Qiziltepa",
 }
+
+# Kanonik shahar/tuman → viloyat (menyu LORRY kabi viloyat bo'yicha guruhlanadi).
+# Ro'yxatda yo'q nom — o'zi viloyat markazi/nomi sifatida qoladi.
+CITY_TO_VILOYAT = {
+    "Chirchiq": "Toshkent", "Angren": "Toshkent", "Olmaliq": "Toshkent", "Bekobod": "Toshkent",
+    "Parkent": "Toshkent", "Kibray": "Toshkent", "Nurafshon": "Toshkent", "Sergeli": "Toshkent",
+    "Piskent": "Toshkent", "Bo'ka": "Toshkent", "Chinoz": "Toshkent", "Ohangaron": "Toshkent",
+    "Yangiyo'l": "Toshkent", "Keles": "Toshkent",
+    "Qo'qon": "Farg'ona", "Marg'ilon": "Farg'ona", "Quvasoy": "Farg'ona", "Oltiariq": "Farg'ona",
+    "Rishton": "Farg'ona", "Beshariq": "Farg'ona", "Buvayda": "Farg'ona", "Bog'dod": "Farg'ona",
+    "Yozyovon": "Farg'ona", "Quva": "Farg'ona", "Uchko'prik": "Farg'ona",
+    "Shahrixon": "Andijon", "Asaka": "Andijon", "Xonobod": "Andijon", "Paxtaobod": "Andijon",
+    "Xo'jaobod": "Andijon", "Qorasuv": "Andijon", "Marhamat": "Andijon",
+    "Chust": "Namangan", "Chortoq": "Namangan", "Kosonsoy": "Namangan", "Norin": "Namangan",
+    "Uchqo'rg'on": "Namangan", "To'raqo'rg'on": "Namangan", "Pop": "Namangan",
+    "Urgut": "Samarqand", "Kattaqo'rg'on": "Samarqand", "Jomboy": "Samarqand", "Bulung'ur": "Samarqand",
+    "G'ijduvon": "Buxoro", "Kogon": "Buxoro", "Qorako'l": "Buxoro", "Vobkent": "Buxoro",
+    "Qarshi": "Qashqadaryo", "Shahrisabz": "Qashqadaryo", "Koson": "Qashqadaryo",
+    "Kitob": "Qashqadaryo", "Muborak": "Qashqadaryo", "Qamashi": "Qashqadaryo", "G'uzor": "Qashqadaryo",
+    "Termiz": "Surxondaryo", "Denov": "Surxondaryo", "Sho'rchi": "Surxondaryo",
+    "Jarqo'rg'on": "Surxondaryo", "Boysun": "Surxondaryo", "Qumqo'rg'on": "Surxondaryo",
+    "Sherobod": "Surxondaryo",
+    "Urganch": "Xorazm", "Xiva": "Xorazm", "Gurlan": "Xorazm", "Xonqa": "Xorazm",
+    "Shovot": "Xorazm", "Hazorasp": "Xorazm",
+    "Nukus": "Qoraqalpog'iston", "Beruniy": "Qoraqalpog'iston", "To'rtko'l": "Qoraqalpog'iston",
+    "Qo'ng'irot": "Qoraqalpog'iston", "Xo'jayli": "Qoraqalpog'iston", "Chimboy": "Qoraqalpog'iston",
+    "Zomin": "Jizzax", "Paxtakor": "Jizzax", "Do'stlik": "Jizzax", "G'allaorol": "Jizzax",
+    "Guliston": "Sirdaryo", "Yangiyer": "Sirdaryo", "Boyovut": "Sirdaryo", "Xovos": "Sirdaryo",
+    "Uchquduq": "Navoiy", "Zarafshon": "Navoiy", "Nurota": "Navoiy", "Qiziltepa": "Navoiy",
+}
+
+def to_viloyat(city: Optional[str]) -> Optional[str]:
+    """Kichik shahar/tumanni o'z viloyatiga aylantiradi.
+
+    Faqat ORIGIN uchun ishlatiladi — viloyat menyusi LORRY kabi toza
+    (~14 tugma) bo'lib qolishi uchun. Destination granular qoladi.
+    """
+    if not city:
+        return city
+    return CITY_TO_VILOYAT.get(city, city)
+
 
 _WEIGHT_RE = re.compile(
     r"(\d+[.,]?\d*)\s*(tonna|tona|tonn|ton|тонна|тон|tn|тн|т|t)\b",
@@ -63,11 +194,14 @@ _PRICE_RE = re.compile(
 )
 # Faqat 4–8 raqamli sonlar narx bo'la oladi — 9 raqamli telefon raqamlari chiqib ketadi.
 _PRICE_BARE_RE = re.compile(r"\b(\d{4,8})\b")
-# Telefon: +998 90 123 45 67 / 998901234567 / 90 123 45 67 / 901234567.
+# Telefon: +998 90 123 45 67 / 998901234567 / 90 123 45 67 / 901234567 / 94 1981464.
+# (?<!\d)/(?!\d) — \b o'rniga: harfga bevosita yopishgan raqamni ham topadi
+# (masalan "тел500033100"), lekin uzun raqam ketma-ketligi ichidan bo'lak olmaydi.
 _PHONE_RE = re.compile(
     r"\+?998[\s\-]?\d{2}[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}"  # +998 XX XXX XX XX
-    r"|\b\d{2}[\s\-]\d{3}[\s\-]\d{2}[\s\-]\d{2}\b"            # XX XXX XX XX (mahalliy)
-    r"|\b\d{9}\b"                                             # XXXXXXXXX (yalang 9)
+    r"|(?<!\d)\d{2}[\s\-]\d{3}[\s\-]\d{2}[\s\-]\d{2}(?!\d)"   # XX XXX XX XX (mahalliy)
+    r"|(?<!\d)\d{2}[\s\-]\d{7}(?!\d)"                          # XX XXXXXXX (bo'sh joysiz qism)
+    r"|(?<!\d)\d{9}(?!\d)"                                     # XXXXXXXXX (yalang 9)
 )
 # Ajratgich: emoji strelkalar (➡️ ⬅️) va oddiy belgilar.
 _SEP_RE = re.compile(r"➡️?|⬅️?|→|«|»|[-–—/><]")
@@ -259,6 +393,9 @@ _NOTE_LABEL_RE = re.compile(
 )
 # Yalang son (ID, narx, masofa) — vazndan tashqari 3+ raqamli sonlar shovqin.
 _BARE_NUM_RE = re.compile(r"\b\d{3,}\b(?!\s*(?:tonna|tona|ton|kg))", re.IGNORECASE)
+# O'zbekcha kelishik qo'shimchasi — shahar nomiga bevosita yopishgan bo'lsa
+# ham birga olib tashlanadi (masalan "Namangandan", "Buxoroga").
+_UZ_SUFFIX_RE = r"(?:dan|dagi|ga|ka|qa|da|дан|даги|га|ка|қа|да)?"
 # LORRY bot shovqini: markdown link, URL, footer qatorlari, hashtag/ID.
 _MDLINK_RE = re.compile(r"\[[^\]]*\]\([^)]*\)")         # [Контакт](tg://user?id=..)
 _URL_RE = re.compile(r"(?:https?://|tg://|t\.me/)\S+")  # linklar
@@ -312,13 +449,48 @@ def extract_note(text: str) -> Optional[str]:
     t = _PRICE_RE.sub(" ", t)          # narxni izohdan chiqarib tashlaymiz
     t = _NOTE_LABEL_RE.sub(" ", t)     # "tel:", "narx" kabi yorliqlarni olib tashlaymiz
     t = _BARE_NUM_RE.sub(" ", t)       # ID/narx/masofa — yalang sonlar
-    for alias in CITY_ALIASES:          # shahar nomlarini olib tashlaymiz
-        t = re.sub(re.escape(alias), " ", t, flags=re.IGNORECASE)
+    for alias in CITY_ALIASES:          # shahar nomlarini (qo'shimchasi bilan) olib tashlaymiz
+        t = re.sub(re.escape(alias) + _UZ_SUFFIX_RE, " ", t, flags=re.IGNORECASE)
     t = _SEP_RE.sub(" ", t)
     t = re.sub(r"[ \t]*\n[ \t\n]*", ", ", t)   # ko'p qatorlarni verguldan ajratamiz
     t = re.sub(r"\s+", " ", t).strip(" ,.;:|-")
     t = re.sub(r"(?:,\s*){2,}", ", ", t)       # ketma-ket vergullarni birlashtiramiz
     return t[:120] if len(t) >= 2 else None
+
+
+def extract_body(text: str, phone: Optional[str] = None) -> Optional[str]:
+    """Manba xabaridagi BARCHA ma'lumot — yo'nalish va telefondan tashqari.
+
+    Shablonning 3-qatori uchun (1-qator: yo'nalish, 2-qator: telefon,
+    3-qator: shu). `extract_note` dan yumshoqroq — narx, vazn, yuk turi,
+    talablar SAQLANADI; faqat yo'nalish sarlavhasi, telefon, linklar,
+    footer, mention va hashtaglar olib tashlanadi.
+    """
+    lines = text.split("\n")
+    # 1-qator yo'nalish sarlavhasi bo'lsa (ajratgichli, masalan "ANDIJON ➡️ ...") — tashlaymiz.
+    if lines and _SEP_RE.search(lines[0]):
+        lines = lines[1:]
+
+    kept: list[str] = []
+    for ln in lines:
+        # Footer qatori (🇺🇿 / 🤖 / @...bot) — butun qatorni tashlaymiz.
+        if re.search(r"🇺🇿|🤖|@\w+bot", ln):
+            continue
+        s = _MDLINK_RE.sub(" ", ln)     # [Kontakt](tg://...) — butunlay
+        s = _URL_RE.sub(" ", s)         # linklar
+        s = _HASHTAG_RE.sub(" ", s)     # #11453823
+        s = _MENTION_RE.sub(" ", s)     # @user
+        s = _PHONE_RE.sub(" ", s)       # telefon (2-qatorda alohida)
+        s = _NOTE_LABEL_RE.sub(" ", s)  # "tel:", "aloqa", "raqam" yorliqlari
+        s = re.sub(r"[*_`📞☎️📱👤🔹]+", " ", s)   # markdown/kontakt bezaklari
+        s = re.sub(r"\s+", " ", s).strip(" ,.;:|-•")
+        # Ma'noli belgi bo'lmasa (faqat emoji/tinish) — tashlaymiz.
+        if s and re.search(r"[0-9A-Za-zА-Яа-яЁёЎўҚқҒғҲҳ]", s):
+            kept.append(s)
+
+    body = ", ".join(kept)
+    body = re.sub(r"(?:,\s*){2,}", ", ", body).strip(" ,.;:|-")
+    return body[:300] if body else None
 
 
 def _extract_cargo_type(text: str) -> Optional[str]:
@@ -450,6 +622,43 @@ async def parse_load(text: str, openai_api_key: str = "") -> ParsedLoad:
     return regex_result
 
 
+_ISUZU_KEYWORDS = ("isuzu", "isyzi", "isuzi", "исузи", "изузи", "усузи", "исузу", "исузий")
+_FURA_KEYWORDS = ("fura", "фура")
+# Isuzudan kichik yuk mashinalari: Hyundai Porter, labo, damas va sh.k.
+_KICHIK_KEYWORDS = (
+    "hyundai", "xyundai", "хундай", "хёндай", "хендай",
+    "porter", "портер", "portor",
+    "labo", "лабо",
+    "damas", "дамас", "damask",
+    "kichik mashina", "kichik yuk", "kichkina",
+)
+
+KICHIK_MAX_WEIGHT_T = 2   # <=2 tonna  -> Kichik (Porter/labo)
+ISUZU_MAX_WEIGHT_T = 10   # 2–10 tonna -> Isuzu
+FURA_MAX_WEIGHT_T = 30    # 10–30 tonna -> Fura
+
+
+def classify_vehicle(text: str, weight_t: Optional[float]) -> VehicleType:
+    """Kichik / Isuzu / Fura toifasiga ajratadi.
+
+    Matnda mashina turi ANIQ yozilgan bo'lsa — shuni oladi (vazndan qat'i
+    nazar). Aks holda vazn bo'yicha: <=2t Kichik, <=10t Isuzu, >10t Fura.
+    Hech biri yo'q bo'lsa — Fura (bu guruhlarda asosiy oqim shu).
+    """
+    tl = text.lower()
+    if any(k in tl for k in _KICHIK_KEYWORDS):
+        return VehicleType.kichik
+    if any(k in tl for k in _ISUZU_KEYWORDS):
+        return VehicleType.isuzu
+    if any(k in tl for k in _FURA_KEYWORDS):
+        return VehicleType.fura
+    if weight_t is not None and weight_t <= KICHIK_MAX_WEIGHT_T:
+        return VehicleType.kichik
+    if weight_t is not None and weight_t <= ISUZU_MAX_WEIGHT_T:
+        return VehicleType.isuzu
+    return VehicleType.fura
+
+
 async def save_parsed_load(
     session: AsyncSession,
     parsed: ParsedLoad,
@@ -460,14 +669,11 @@ async def save_parsed_load(
 ) -> Optional[Load]:
     from bot.services.load_service import get_or_create_route
 
-    # Dublikat (repost) — bir xil matnli faol yuk allaqachon bo'lsa, saqlamaymiz.
+    # Dublikat (repost) — bir xil matn ilgari kelgan bo'lsa, qayta saqlamaymiz.
+    # Status'dan qat'i nazar: aks holda bot qayta ishga tushganda backfill
+    # logist deb bekor qilingan (cancelled) eski xabarlarni qayta tiriltiradi.
     dup = await session.execute(
-        select(Load.id)
-        .where(
-            Load.raw_text == raw_text,
-            Load.status.in_([LoadStatus.open, LoadStatus.pending, LoadStatus.matched]),
-        )
-        .limit(1)
+        select(Load.id).where(Load.raw_text == raw_text).limit(1)
     )
     if dup.scalar_one_or_none() is not None:
         return None
@@ -491,10 +697,12 @@ async def save_parsed_load(
         weight_t=Decimal(str(round(parsed.weight_t, 2))) if parsed.weight_t else None,
         contact_phone=parsed.contact,
         note=parsed.note,
+        vehicle_type=classify_vehicle(raw_text, parsed.weight_t),
         status=status,
     )
     if posted_at is not None:
         load.posted_at = posted_at
     session.add(load)
     await session.flush()
+
     return load
