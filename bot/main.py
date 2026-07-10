@@ -8,7 +8,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.redis import RedisStorage
-from aiogram.types import BotCommand, TelegramObject
+from aiogram.types import BotCommand, TelegramObject, Update
 
 from bot.config import settings
 from bot.handlers import admin, driver, fallback, misc, provider, start
@@ -20,7 +20,7 @@ from bot.services.notify_service import (
     stop_notify,
     stop_reminder,
 )
-from bot.services.user_service import seed_default_routes
+from bot.services.user_service import seed_default_routes, touch_last_active
 from db.database import AsyncSessionLocal, engine
 
 
@@ -31,9 +31,30 @@ class DbSessionMiddleware:
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
+        # Aktivlik kuzatuvi (dashboard uchun): har harakatda last_active_at
+        # yangilanadi (5 daqiqada bir marta). ALOHIDA session'da — handler
+        # session'ining tranzaksiyasiga aralashmasligi uchun.
+        tg_id = _telegram_id_of(event)
+        if tg_id is not None:
+            try:
+                async with AsyncSessionLocal() as act_session:
+                    await touch_last_active(act_session, tg_id)
+            except Exception:  # aktivlik yozuvi asosiy oqimni buzmasin
+                pass
+
         async with AsyncSessionLocal() as session:
             data["session"] = session
             return await handler(event, data)
+
+
+def _telegram_id_of(event: TelegramObject) -> int | None:
+    """Update ichidan foydalanuvchi Telegram ID sini oladi (message/callback)."""
+    if isinstance(event, Update):
+        if event.message and event.message.from_user:
+            return event.message.from_user.id
+        if event.callback_query and event.callback_query.from_user:
+            return event.callback_query.from_user.id
+    return None
 
 
 async def main() -> None:

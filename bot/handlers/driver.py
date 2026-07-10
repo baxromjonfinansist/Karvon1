@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from html import escape
 
 from sqlalchemy import select
@@ -198,6 +199,10 @@ async def show_feed(message: Message, session: AsyncSession) -> None:
             "/subscribe buyrug'ini yuboring yoki admin bilan bog'laning."
         )
         return
+
+    # Dashboard uchun: yuk feed'ini haqiqatan ochgan haydovchini belgilaymiz.
+    user.last_feed_view_at = datetime.utcnow()
+    await session.commit()
 
     await delete_stale_loads(session)  # 10 daqiqadan eski yuklarni tozalaymiz
 

@@ -24,7 +24,11 @@ from bot.services.logist_service import (
     list_logist_phones,
     remove_logist_phone,
 )
-from bot.services.user_service import get_or_none, grant_subscription
+from bot.services.user_service import (
+    get_activity_dashboard,
+    get_or_none,
+    grant_subscription,
+)
 from db.models import (
     Deal, DealStatus, Load, LoadStatus,
     Subscription, SubscriptionPlan, SubscriptionStatus, User,
@@ -49,7 +53,7 @@ def _admin_menu_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📋 Moderatsiya"), KeyboardButton(text="👥 Foydalanuvchilar")],
-            [KeyboardButton(text="📊 Statistika")],
+            [KeyboardButton(text="📊 Statistika"), KeyboardButton(text="📈 Dashboard")],
         ],
         resize_keyboard=True,
     )
@@ -433,4 +437,44 @@ async def statistics(message: Message, session: AsyncSession) -> None:
         f"  Yakunlangan: {completed_deals}\n\n"
         f"💰 GMV: {_fmt_price(gmv)}\n"
         f"📈 Fill rate: {fill_rate:.1f}%"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 📈 Dashboard — aktiv foydalanuvchilar statistikasi (DAU/WAU/MAU)
+# ---------------------------------------------------------------------------
+
+@router.message(F.text == "📈 Dashboard")
+async def dashboard(message: Message, session: AsyncSession) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+
+    d = await get_activity_dashboard(session)
+
+    total = d["total_users"]
+    def _pct(n: int) -> str:
+        return f" ({n / total * 100:.0f}%)" if total else ""
+
+    # Rol bo'yicha aktiv (hafta) — nomlangan
+    role_lines = []
+    for role_key, cnt in sorted(d["active_by_role"].items(), key=lambda x: -x[1]):
+        role_lines.append(f"  {_ROLE_LABELS.get(role_key, role_key)}: {cnt}")
+    role_text = "\n".join(role_lines) if role_lines else "  —"
+
+    await message.answer(
+        f"📈 <b>Dashboard — aktivlik</b>\n\n"
+        f"🟢 <b>Aktiv foydalanuvchilar:</b>\n"
+        f"  Bugun (DAU): {d['dau']}{_pct(d['dau'])}\n"
+        f"  Bu hafta (WAU): {d['wau']}{_pct(d['wau'])}\n"
+        f"  Bu oy (MAU): {d['mau']}{_pct(d['mau'])}\n\n"
+        f"🚛 <b>Yuk qidirgan haydovchilar:</b>\n"
+        f"  Bugun: {d['feed_day']}\n"
+        f"  Bu hafta: {d['feed_week']}\n\n"
+        f"🆕 <b>Yangi ro'yxatdan o'tganlar:</b>\n"
+        f"  Bugun: {d['signup_day']}\n"
+        f"  Bu hafta: {d['signup_week']}\n"
+        f"  Bu oy: {d['signup_month']}\n\n"
+        f"👤 <b>Bu hafta aktiv (rol bo'yicha):</b>\n"
+        f"{role_text}\n\n"
+        f"<i>Jami: {total} · aktivlik kuzatuvi boshlangan userlar: {d['ever_active']}</i>"
     )

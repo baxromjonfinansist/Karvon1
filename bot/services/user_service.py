@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import (
@@ -22,6 +22,33 @@ async def get_or_none(session: AsyncSession, telegram_id: int) -> Optional[User]
         select(User).where(User.telegram_id == telegram_id)
     )
     return result.scalar_one_or_none()
+
+
+# Aktivlik yozuvini shu oraliqdan tez-tez yangilamaymiz (DB yukini kamaytirish).
+_ACTIVE_THROTTLE = timedelta(minutes=5)
+
+
+async def touch_last_active(session: AsyncSession, telegram_id: int) -> None:
+    """Foydalanuvchining last_active_at ini yangilaydi (DAU/WAU/MAU uchun).
+
+    Throttle: oxirgi yozuvdan _ACTIVE_THROTTLE o'tmagan bo'lsa — tegmaydi
+    (kun/hafta darajasidagi aktivlikka ta'sir qilmaydi, DB yozuvini tejaydi).
+    Ro'yxatdan o'tmagan (User yo'q) telegram_id uchun jim o'tadi.
+    """
+    now = datetime.utcnow()
+    result = await session.execute(
+        select(User.id, User.last_active_at).where(User.telegram_id == telegram_id)
+    )
+    row = result.first()
+    if row is None:
+        return  # hali ro'yxatdan o'tmagan — /start jarayonida yoziladi
+    user_id, last_active = row
+    if last_active is not None and now - last_active < _ACTIVE_THROTTLE:
+        return
+    await session.execute(
+        update(User).where(User.id == user_id).values(last_active_at=now)
+    )
+    await session.commit()
 
 
 async def create_user(
@@ -155,6 +182,64 @@ async def get_all_routes(session: AsyncSession) -> list[Route]:
         .order_by(func.count(Load.id).desc(), Route.id)
     )
     return list(result.scalars().all())
+
+
+async def get_activity_dashboard(session: AsyncSession) -> dict:
+    """Admin dashboard uchun aktivlik statistikasi.
+
+    Barcha vaqtlar naive UTC (bazadagi ustunlar bilan mos). "Aktiv" =
+    last_active_at berilgan oyna ichida. Bu ma'lumot MIGRATSIYADAN keyin
+    to'plana boshlaydi — o'tmish uchun last_active_at NULL (aktivmas sanaladi).
+    """
+    now = datetime.utcnow()
+    day_ago = now - timedelta(days=1)
+    week_ago = now - timedelta(days=7)
+    month_ago = now - timedelta(days=30)
+
+    async def _count(condition) -> int:
+        return (await session.execute(
+            select(func.count(User.id)).where(condition)
+        )).scalar() or 0
+
+    # DAU / WAU / MAU — oxirgi faollik oynasi bo'yicha
+    dau = await _count(User.last_active_at >= day_ago)
+    wau = await _count(User.last_active_at >= week_ago)
+    mau = await _count(User.last_active_at >= month_ago)
+
+    total_users = await _count(User.id.isnot(None))
+    ever_active = await _count(User.last_active_at.isnot(None))
+
+    # Yuk feed'ini ochgan haydovchilar (kun/hafta)
+    feed_day = await _count(User.last_feed_view_at >= day_ago)
+    feed_week = await _count(User.last_feed_view_at >= week_ago)
+
+    # Ro'yxatdan o'tish dinamikasi (created_at bo'yicha — o'tmish uchun ham ishlaydi)
+    signup_day = await _count(User.created_at >= day_ago)
+    signup_week = await _count(User.created_at >= week_ago)
+    signup_month = await _count(User.created_at >= month_ago)
+
+    # Rol bo'yicha aktiv (hafta) — kim faol
+    role_rows = (await session.execute(
+        select(User.role, func.count(User.id))
+        .where(User.last_active_at >= week_ago)
+        .group_by(User.role)
+    )).all()
+    active_by_role = {role.value: cnt for role, cnt in role_rows}
+
+    return {
+        "now": now,
+        "total_users": total_users,
+        "ever_active": ever_active,
+        "dau": dau,
+        "wau": wau,
+        "mau": mau,
+        "feed_day": feed_day,
+        "feed_week": feed_week,
+        "signup_day": signup_day,
+        "signup_week": signup_week,
+        "signup_month": signup_month,
+        "active_by_role": active_by_role,
+    }
 
 
 async def seed_default_routes(session: AsyncSession) -> None:

@@ -118,6 +118,9 @@ class User(Base):
     # Yo'nalish bo'yicha avtomatik yuk xabarnomasi (opt-in)
     notify_enabled: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
     last_notified_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # Aktivlik kuzatuvi (dashboard uchun): oxirgi bot bilan muloqot, oxirgi yuk ko'rish.
+    last_active_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    last_feed_view_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     # Eng aktual yo'nalish (viloyat juftligi, ikkala tomon bo'yicha xabarnoma keladi)
     pref_origin: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     pref_destination: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
