@@ -277,15 +277,6 @@ CARGO_KEYWORDS = {
     "gaz": "Neft mahsulotlari",
 }
 
-# Yuk turini aniqlashda e'tiborga olinmaydigan so'zlar (shovqin).
-_CARGO_STOPWORDS = {
-    "narx", "narxi", "tel", "telefon", "raqam", "dan", "ga", "uchun",
-    "kerak", "kerakli", "bor", "yuk", "yuklar", "fura", "isuzu", "mashina",
-    "kelishamiz", "kelishiladi", "kelishilgan", "som", "so'm", "sum",
-    "ming", "mln", "tonna", "ton", "kg", "narxda", "haqida", "bilan",
-    "yetkazib", "berish", "olib", "boring",
-}
-
 
 @dataclass
 class ParsedLoad:
@@ -599,31 +590,17 @@ def extract_body(text: str, phone: Optional[str] = None) -> Optional[str]:
 
 
 def _extract_cargo_type(text: str) -> Optional[str]:
-    tl = text.lower()
+    """Yuk turini FAQAT aniq kalit so'z bo'yicha kategoriyaga soladi.
 
-    # 1) Kalit so'z bo'yicha aniq kategoriya
+    Kalit so'z topilmasa -> None (yuk baribir bazaga tushadi, cargo_type NULL).
+    Ilgari fallback bo'lgan (qolgan so'zlarni qaytarish) — u markdown link,
+    "Tent Ref", "[Контакт]" kabi shovqinni cargo_type'ga yozib qo'yardi, shu
+    sabab olib tashlandi. Endi cargo_type yo aniq kategoriya, yo bo'sh.
+    """
+    tl = text.lower()
     for keyword, category in CARGO_KEYWORDS.items():
         if keyword in tl:
             return category
-
-    # 2) Fallback: shahar/vazn/narx/telefonni olib tashlab, qolgan
-    #    "ma'noli" so'zlarni qaytaramiz (stopword'larsiz).
-    cleaned = text
-    cleaned = _PHONE_RE.sub("", cleaned)
-    cleaned = _WEIGHT_RE.sub("", cleaned)
-    cleaned = _PRICE_RE.sub("", cleaned)
-    cleaned = _PRICE_BARE_RE.sub("", cleaned)
-    for alias in CITY_ALIASES:
-        cleaned = re.sub(re.escape(alias), "", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"[-–—→/,;:+\d]+", " ", cleaned)
-
-    tokens = [
-        t.strip()
-        for t in cleaned.split()
-        if len(t.strip()) >= 3 and t.strip().lower() not in _CARGO_STOPWORDS
-    ]
-    if tokens:
-        return " ".join(tokens[:4])
     return None
 
 
