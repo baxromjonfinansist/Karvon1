@@ -91,6 +91,7 @@ async def _process_message(
     """
     from bot.services.parser_service import (
         ParsedLoad,
+        _extract_cargo_type,
         _extract_contact,
         _extract_route,
         _extract_weight,
@@ -110,6 +111,9 @@ async def _process_message(
             return
         origin = region
         destination = extract_destination_freetext(text)
+        if not destination:
+            # Destination topilmadimi — parse log yozamiz (keyinchalik regex yaxshilash uchun)
+            log.debug("PARSE_NO_DEST topic=%s text=%r", topic_id, text[:80])
     else:
         # Oddiy guruh: mavzu yo'q — yo'nalish to'liq matndan o'qiladi.
         # Origin viloyatga aylantiriladi (masalan Chortoq -> Namangan) —
@@ -118,10 +122,13 @@ async def _process_message(
         origin = to_viloyat(origin)
 
     if not origin or not destination or destination == origin:
+        # Yo'nalish topilmadi — parse failure logini yozamiz
+        log.debug("PARSE_NO_ROUTE ch=%s text=%r", channel, text[:80])
         return  # yo'nalish topilmadi yoki origin=destination -> tashlanadi
 
     contact = _extract_contact(text)  # normallashtirilgan: +998 XX XXX XX XX
     if not contact:
+        log.debug("PARSE_NO_PHONE ch=%s text=%r", channel, text[:80])
         return  # telefon yo'q -> tashlanadi
 
     # Qo'lda-logist ro'yxati (admin qarori) — har qanday kanalda, algoritmdan ustun.
@@ -134,14 +141,17 @@ async def _process_message(
     if posted_at is not None and posted_at.tzinfo is not None:
         posted_at = posted_at.replace(tzinfo=None)
 
+    # cargo_type regex orqali aniqlanadi — ilgari None edi (bug fix).
+    cargo_type = _extract_cargo_type(text)
+
     parsed = ParsedLoad(
         origin=origin,
         destination=destination,
-        cargo_type=None,
+        cargo_type=cargo_type,
         weight_t=_extract_weight(text),
         contact=contact,
         note=extract_note(text),
-        confidence=1.0,  # yo'nalish + telefon bor — ishonchli
+        confidence=1.0,  # yo'nalish (forum topic / regex) + telefon bor — ishonchli
     )
 
     async with AsyncSessionLocal() as session:

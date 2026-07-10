@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import Load, LoadStatus, VehicleType
+
+log = logging.getLogger(__name__)
 
 # Shahar/tuman variantlari (kichik harf) → kanonik lotin nomi.
 # Kirill va lotin variantlar bir xil kanonik nomга moslanadi —
@@ -345,7 +349,62 @@ def _ordered_cities(text: str) -> list:
     return out
 
 
+# O'zbek kelishik qo'shimchalari — destination va origin aniqlanishi uchun.
+# Shahar nomidan keyin keladi: "Toshkentga" → ga (destination), "Farg'onadan" → dan (origin)
+_DEST_SUFFIX_RE = re.compile(
+    r"(?:ga|ka|qa|g'a|ning|tomon|tomonga|томон|учун)\b",
+    re.IGNORECASE,
+)
+_ORIGIN_SUFFIX_RE = re.compile(
+    r"(?:dan|idan|dagi|дан|даги)\b",
+    re.IGNORECASE,
+)
+
+
+def _extract_route_with_preposition(text: str):
+    """Kelishik qo'shimchasi bo'yicha yo'nalishni aniqlaydi (separator yo'q bo'lganda).
+
+    "Toshkentga Farg'onadan yuk bor" → origin=Farg'ona, dest=Toshkent
+    "Farg'onadan Toshkentga" → origin=Farg'ona, dest=Toshkent
+
+    Qaytaradi: (origin, dest) yoki (None, None) agar aniqlanmasa.
+    """
+    tl = _norm_apostrophe(text.lower())
+    tl_stripped = _strip_apostrophe(tl)
+
+    origin_hits: list[tuple[int, str]] = []   # (idx, canon)
+    dest_hits: list[tuple[int, str]] = []
+
+    for alias, canon in CITY_ALIASES.items():
+        alias_n = _norm_apostrophe(alias)
+        idx = tl.find(alias_n)
+        if idx == -1:
+            idx = tl_stripped.find(_strip_apostrophe(alias_n))
+        if idx == -1:
+            continue
+
+        end = idx + len(alias_n)
+        # Shahar nomidan keyin nima keladi (max 6 belgi)
+        suffix_window = tl[end: end + 8].lstrip(" \t")
+
+        if _DEST_SUFFIX_RE.match(suffix_window):
+            dest_hits.append((idx, canon))
+        elif _ORIGIN_SUFFIX_RE.match(suffix_window):
+            origin_hits.append((idx, canon))
+
+    if origin_hits and dest_hits:
+        origin_hits.sort()
+        dest_hits.sort()
+        o = origin_hits[0][1]
+        d = dest_hits[0][1]
+        if o != d:
+            return o, d
+
+    return None, None
+
+
 def _extract_route(text: str):
+    # 1-bosqich: ajratgich belgisi (➡️ → - /)
     sep = _SEP_RE.search(text)
     if sep:
         left = text[: sep.start()].strip()
@@ -356,7 +415,13 @@ def _extract_route(text: str):
         if o and d and o != d:
             return o, d
 
-    # Fall back: barcha shaharlar paydo bo'lish tartibida
+    # 2-bosqich: kelishik qo'shimchasi bo'yicha (YANGI)
+    # "Toshkentga Farg'onadan" — separator yo'q, lekin kelishik aniq
+    o, d = _extract_route_with_preposition(text)
+    if o and d:
+        return o, d
+
+    # 3-bosqich (fallback): matn tartibida birinchi ikki shahar
     cities = _ordered_cities(text)
     if len(cities) >= 2:
         return cities[0], cities[1]
@@ -697,6 +762,47 @@ def classify_vehicle(text: str, weight_t: Optional[float]) -> VehicleType:
     if weight_t is not None and weight_t <= ISUZU_MAX_WEIGHT_T:
         return VehicleType.isuzu
     return VehicleType.fura
+
+
+# ---------------------------------------------------------------------------
+# Feedback — parser xatolarini yozib borish (regex yaxshilash uchun)
+# ---------------------------------------------------------------------------
+
+_FEEDBACK_LOG = Path("logs/parse_corrections.jsonl")
+
+
+def record_parse_correction(
+    *,
+    load_id: int,
+    raw_text: str,
+    wrong_field: str,       # "origin" | "destination" | "cargo_type" | "logist_fp" | "route_reversed"
+    wrong_value: Optional[str],
+    correct_value: Optional[str],
+) -> None:
+    """Parser xatosini JSONL faylga yozadi — keyinchalik regex tahlili uchun.
+
+    Qachon chaqiriladi:
+      - Admin pending yukni rad etganda (noto'g'ri parse)
+      - Admin yo'nalishni qo'lda tuzatganda
+      - Logist false positive aniqlanganda (record_logist_false_positive)
+
+    Fayl: logs/parse_corrections.jsonl — har qator alohida JSON obyekt.
+    """
+    try:
+        _FEEDBACK_LOG.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "ts": datetime.utcnow().isoformat(),
+            "load_id": load_id,
+            "wrong_field": wrong_field,
+            "wrong_value": wrong_value,
+            "correct_value": correct_value,
+            "raw_text": raw_text[:200],
+        }
+        with _FEEDBACK_LOG.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        log.debug("FEEDBACK yazildi: load_id=%d field=%s", load_id, wrong_field)
+    except Exception as exc:
+        log.warning("FEEDBACK yozib bo'lmadi: %s", exc)
 
 
 async def save_parsed_load(

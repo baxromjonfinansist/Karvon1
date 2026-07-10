@@ -305,3 +305,79 @@ async def purge_old_listings(session: AsyncSession, older_than_hours: int = 48) 
         )
     )
     return result.rowcount or 0
+
+
+# ---------------------------------------------------------------------------
+# Admin diagnostika va feedback
+# ---------------------------------------------------------------------------
+
+async def get_phone_stats(
+    session: AsyncSession,
+    phone_raw: str,
+    *,
+    hours: int = WINDOW_HOURS,
+) -> dict:
+    """Telefon bo'yicha logist tahlili — admin uchun (nima uchun bloklandi?).
+
+    Qaytaradi:
+        {
+            "phone": "+998901234567",
+            "window_hours": 12,
+            "distinct_routes": 3,
+            "label": "cargo",
+            "routes": [("Toshkent", "Farg'ona"), ...],
+            "in_blocklist": False,
+        }
+    """
+    from bot.services.logist_service import is_blocklisted  # noqa: circular import workaround
+
+    phone = normalize_phone(phone_raw)
+    if phone is None:
+        return {"error": "Telefon noto'g'ri format"}
+
+    now = datetime.utcnow()
+    window_start = now - timedelta(hours=hours)
+
+    result = await session.execute(
+        select(LorryListing.origin_canon, LorryListing.dest_canon, LorryListing.posted_at)
+        .where(
+            LorryListing.phone_norm == phone,
+            LorryListing.posted_at >= window_start,
+        )
+        .order_by(LorryListing.posted_at.desc())
+    )
+    rows = result.all()
+    routes = [(r[0], r[1]) for r in rows]
+    decision = classify_routes(routes)
+
+    return {
+        "phone": phone,
+        "window_hours": hours,
+        "distinct_routes": distinct_route_count(routes),
+        "label": decision.value,
+        "routes": routes,
+        "in_blocklist": is_blocklisted(phone),
+    }
+
+
+def record_logist_false_positive(phone_raw: str, note: str = "") -> None:
+    """Logist sifatida noto'g'ri bloklangan raqamni feedback log ga yozadi.
+
+    Admin `/unblock` buyrug'i berilganda chaqiriladi — keyinchalik threshold
+    va window sozlash uchun ma'lumot yig'adi.
+
+    Fayl: logs/parse_corrections.jsonl (parser_service bilan bitta fayl).
+    """
+    from bot.services.parser_service import record_parse_correction
+    phone = normalize_phone(phone_raw)
+    record_parse_correction(
+        load_id=0,
+        raw_text=f"phone={phone}",
+        wrong_field="logist_fp",
+        wrong_value="logist",
+        correct_value="cargo",
+    )
+    import logging as _logging
+    _logging.getLogger(__name__).warning(
+        "⚠️ Logist FP qayd etildi: tel=%s note=%s", phone, note
+    )
