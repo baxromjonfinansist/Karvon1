@@ -116,7 +116,7 @@ CITY_ALIASES = {
     "sho'rchi": "Sho'rchi", "shurchi": "Sho'rchi", "шурчи": "Sho'rchi", "шўрчи": "Sho'rchi",
     "jarqo'rg'on": "Jarqo'rg'on", "jarkurgan": "Jarqo'rg'on", "жаркургон": "Jarqo'rg'on",
     "boysun": "Boysun", "бойсун": "Boysun",
-    "qumqo'rg'on": "Qumqo'rg'on", "кумкургон": "Qumqo'rg'on",
+    "qumqo'rg'on": "Qumqo'rg'on", "кумкургон": "Qumqo'rg'on", "kumqo'rg'on": "Qumqo'rg'on",
     "sherobod": "Sherobod", "шеробод": "Sherobod",
     # Xorazm viloyati
     "gurlan": "Gurlan", "гурлан": "Gurlan",
@@ -157,6 +157,7 @@ CITY_ALIASES = {
     "rohat": "Rohat", "рохат": "Rohat",
     "romitan": "Romitan", "ромитан": "Romitan",
     "mirbozor": "Mirbozor", "мирбозор": "Mirbozor",
+    "olot": "Olot", "олот": "Olot",
     # Surxondaryo viloyati (qo'shimcha)
     "oltinsoy": "Oltinsoy", "олтинсой": "Oltinsoy",
     "kukdala": "Kukdala", "куксарой": "Kukdala",
@@ -183,7 +184,7 @@ CITY_TO_VILOYAT = {
     "Urgut": "Samarqand", "Kattaqo'rg'on": "Samarqand", "Jomboy": "Samarqand", "Bulung'ur": "Samarqand",
     "Sazagan": "Samarqand", "Toyloq": "Samarqand",
     "G'ijduvon": "Buxoro", "Kogon": "Buxoro", "Qorako'l": "Buxoro", "Vobkent": "Buxoro",
-    "Rohat": "Buxoro", "Romitan": "Buxoro", "Mirbozor": "Buxoro",
+    "Rohat": "Buxoro", "Romitan": "Buxoro", "Mirbozor": "Buxoro", "Olot": "Buxoro",
     "Qarshi": "Qashqadaryo", "Shahrisabz": "Qashqadaryo", "Koson": "Qashqadaryo",
     "Kitob": "Qashqadaryo", "Muborak": "Qashqadaryo", "Qamashi": "Qashqadaryo", "G'uzor": "Qashqadaryo",
     "Termiz": "Surxondaryo", "Denov": "Surxondaryo", "Sho'rchi": "Surxondaryo",
