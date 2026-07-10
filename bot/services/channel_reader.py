@@ -42,11 +42,20 @@ def _topic_id_of(message) -> Optional[int]:
 async def _build_topic_map(client, channel_id) -> Optional[dict]:
     """{topic_id: Viloyat nomi} — forum mavzularidan tuziladi.
 
+    Faqat 14 rasmiy viloyatga mos keladigan mavzular qabul qilinadi (aniqlash
+    parser_service'dagi shahar-alias jadvali orqali). "Premium", "🚛 haydovchi
+    e'lonlari", "Elon berish", "General" kabi viloyat bo'lmagan mavzular
+    filtrlanadi — aks holda ular ham "viloyat" sifatida bazaga tushib,
+    haydovchi menyusida (ALL_VILOYATS) begona qator bo'lib chiqadi.
+
     Oddiy (forum bo'lmagan) guruh uchun None qaytaradi — bunday guruhda
     yo'nalish har bir xabar matnidan alohida o'qiladi (_process_message).
     """
     from telethon import functions
     from telethon.errors import ChannelForumMissingError
+
+    from bot.services.parser_service import to_viloyat, _find_city_in
+    from bot.services.load_service import ALL_VILOYATS
 
     region_by_topic: dict = {}
     try:
@@ -63,9 +72,11 @@ async def _build_topic_map(client, channel_id) -> Optional[dict]:
         tid = getattr(t, "id", None)
         if not title or tid is None:
             continue
-        if title.strip().upper() in ("ELON BERISH", "GENERAL"):
+        viloyat = to_viloyat(_find_city_in(title))
+        if viloyat not in ALL_VILOYATS:
+            log.info("Mavzu '%s' viloyat emas — o'tkazib yuborildi [%s]", title.strip(), channel_id)
             continue
-        region_by_topic[tid] = title.strip().capitalize()
+        region_by_topic[tid] = viloyat
     return region_by_topic
 
 

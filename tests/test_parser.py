@@ -59,23 +59,23 @@ def test_no_city_low_confidence():
 
 
 # ---------------------------------------------------------------------------
-# Telefon normalizatsiya — +998 XX XXX XX XX
+# Telefon normalizatsiya — +998XXXXXXXXX (bo'shliqsiz)
 # ---------------------------------------------------------------------------
 
 def test_phone_with_plus():
-    assert normalize_phone("+998935554433") == "+998 93 555 44 33"
+    assert normalize_phone("+998935554433") == "+998935554433"
 
 
 def test_phone_bare_998():
-    assert normalize_phone("998901112233") == "+998 90 111 22 33"
+    assert normalize_phone("998901112233") == "+998901112233"
 
 
 def test_phone_local_9_digits():
-    assert normalize_phone("901234567") == "+998 90 123 45 67"
+    assert normalize_phone("901234567") == "+998901234567"
 
 
 def test_phone_spaced_input():
-    assert normalize_phone("90 123 45 67") == "+998 90 123 45 67"
+    assert normalize_phone("90 123 45 67") == "+998901234567"
 
 
 def test_phone_invalid_returns_none():
@@ -85,7 +85,7 @@ def test_phone_invalid_returns_none():
 
 def test_contact_extracted_and_normalized():
     r = parse_with_regex("Toshkent Nukus don 15t +998935554433")
-    assert r.contact == "+998 93 555 44 33"
+    assert r.contact == "+998935554433"
 
 
 # ---------------------------------------------------------------------------

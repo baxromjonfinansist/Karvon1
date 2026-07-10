@@ -369,7 +369,7 @@ def _extract_contact(text: str) -> Optional[str]:
 
 
 def normalize_phone(raw: Optional[str]) -> Optional[str]:
-    """Raqamni +998 XX XXX XX XX ko'rinishiga keltiradi.
+    """Raqamni +998XXXXXXXXX (bo'shliqsiz) ko'rinishiga keltiradi.
 
     Kiruvchi: +998901234567 / 998901234567 / 901234567 / 90 123 45 67.
     """
@@ -377,8 +377,7 @@ def normalize_phone(raw: Optional[str]) -> Optional[str]:
     if len(digits) == 9:            # 901234567 → mahalliy
         digits = "998" + digits
     if len(digits) == 12 and digits.startswith("998"):
-        d = digits[3:]
-        return f"+998 {d[:2]} {d[2:5]} {d[5:7]} {d[7:]}"
+        return "+" + digits
     return None
 
 
