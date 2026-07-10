@@ -141,6 +141,27 @@ CITY_ALIASES = {
     # Navoiy viloyati
     "nurota": "Nurota", "нурота": "Nurota",
     "qiziltepa": "Qiziltepa", "кизилтепа": "Qiziltepa",
+    "navbahor": "Navbahor", "навбахор": "Navbahor",
+    "gazgan": "Gasgan", "gasgan": "Gasgan", "g'azg'on": "Gasgan", "gazgon": "Gasgan", "газган": "Gasgan",
+    # Toshkent viloyati (qo'shimcha)
+    "nazarbek": "Nazarbek", "назарбек": "Nazarbek",
+    "chimyon": "Chimyon", "чимён": "Chimyon",
+    "bektemir": "Bektemir", "бектемир": "Bektemir",
+    # Farg'ona viloyati (qo'shimcha)
+    "yaypan": "Yaypan", "яйпан": "Yaypan",
+    "ravot": "Ravot", "равот": "Ravot",
+    # Samarqand viloyati (qo'shimcha)
+    "sazagan": "Sazagan", "сазаган": "Sazagan",
+    "toyloq": "Toyloq", "тойлоқ": "Toyloq", "toyloq'": "Toyloq",
+    # Buxoro viloyati (qo'shimcha)
+    "rohat": "Rohat", "рохат": "Rohat",
+    "romitan": "Romitan", "ромитан": "Romitan",
+    "mirbozor": "Mirbozor", "мирбозор": "Mirbozor",
+    # Surxondaryo viloyati (qo'shimcha)
+    "oltinsoy": "Oltinsoy", "олтинсой": "Oltinsoy",
+    "kukdala": "Kukdala", "куксарой": "Kukdala",
+    # Jizzax viloyati (qo'shimcha)
+    "forish": "Forish", "фориш": "Forish",
 }
 
 # Kanonik shahar/tuman → viloyat (menyu LORRY kabi viloyat bo'yicha guruhlanadi).
@@ -149,28 +170,34 @@ CITY_TO_VILOYAT = {
     "Chirchiq": "Toshkent", "Angren": "Toshkent", "Olmaliq": "Toshkent", "Bekobod": "Toshkent",
     "Parkent": "Toshkent", "Kibray": "Toshkent", "Nurafshon": "Toshkent", "Sergeli": "Toshkent",
     "Piskent": "Toshkent", "Bo'ka": "Toshkent", "Chinoz": "Toshkent", "Ohangaron": "Toshkent",
-    "Yangiyo'l": "Toshkent", "Keles": "Toshkent",
+    "Yangiyo'l": "Toshkent", "Keles": "Toshkent", "Nazarbek": "Toshkent", "Chimyon": "Toshkent",
+    "Bektemir": "Toshkent",
     "Qo'qon": "Farg'ona", "Marg'ilon": "Farg'ona", "Quvasoy": "Farg'ona", "Oltiariq": "Farg'ona",
     "Rishton": "Farg'ona", "Beshariq": "Farg'ona", "Buvayda": "Farg'ona", "Bog'dod": "Farg'ona",
-    "Yozyovon": "Farg'ona", "Quva": "Farg'ona", "Uchko'prik": "Farg'ona",
+    "Yozyovon": "Farg'ona", "Quva": "Farg'ona", "Uchko'prik": "Farg'ona", "Yaypan": "Farg'ona",
+    "Ravot": "Farg'ona",
     "Shahrixon": "Andijon", "Asaka": "Andijon", "Xonobod": "Andijon", "Paxtaobod": "Andijon",
     "Xo'jaobod": "Andijon", "Qorasuv": "Andijon", "Marhamat": "Andijon",
     "Chust": "Namangan", "Chortoq": "Namangan", "Kosonsoy": "Namangan", "Norin": "Namangan",
     "Uchqo'rg'on": "Namangan", "To'raqo'rg'on": "Namangan", "Pop": "Namangan",
     "Urgut": "Samarqand", "Kattaqo'rg'on": "Samarqand", "Jomboy": "Samarqand", "Bulung'ur": "Samarqand",
+    "Sazagan": "Samarqand", "Toyloq": "Samarqand",
     "G'ijduvon": "Buxoro", "Kogon": "Buxoro", "Qorako'l": "Buxoro", "Vobkent": "Buxoro",
+    "Rohat": "Buxoro", "Romitan": "Buxoro", "Mirbozor": "Buxoro",
     "Qarshi": "Qashqadaryo", "Shahrisabz": "Qashqadaryo", "Koson": "Qashqadaryo",
     "Kitob": "Qashqadaryo", "Muborak": "Qashqadaryo", "Qamashi": "Qashqadaryo", "G'uzor": "Qashqadaryo",
     "Termiz": "Surxondaryo", "Denov": "Surxondaryo", "Sho'rchi": "Surxondaryo",
     "Jarqo'rg'on": "Surxondaryo", "Boysun": "Surxondaryo", "Qumqo'rg'on": "Surxondaryo",
-    "Sherobod": "Surxondaryo",
+    "Sherobod": "Surxondaryo", "Oltinsoy": "Surxondaryo", "Kukdala": "Surxondaryo",
     "Urganch": "Xorazm", "Xiva": "Xorazm", "Gurlan": "Xorazm", "Xonqa": "Xorazm",
     "Shovot": "Xorazm", "Hazorasp": "Xorazm",
     "Nukus": "Qoraqalpog'iston", "Beruniy": "Qoraqalpog'iston", "To'rtko'l": "Qoraqalpog'iston",
     "Qo'ng'irot": "Qoraqalpog'iston", "Xo'jayli": "Qoraqalpog'iston", "Chimboy": "Qoraqalpog'iston",
     "Zomin": "Jizzax", "Paxtakor": "Jizzax", "Do'stlik": "Jizzax", "G'allaorol": "Jizzax",
+    "Forish": "Jizzax",
     "Guliston": "Sirdaryo", "Yangiyer": "Sirdaryo", "Boyovut": "Sirdaryo", "Xovos": "Sirdaryo",
     "Uchquduq": "Navoiy", "Zarafshon": "Navoiy", "Nurota": "Navoiy", "Qiziltepa": "Navoiy",
+    "Navbahor": "Navoiy", "Gasgan": "Navoiy",
 }
 
 def to_viloyat(city: Optional[str]) -> Optional[str]:
@@ -275,13 +302,26 @@ def _norm_apostrophe(s: str) -> str:
     return s.replace("’", "'").replace("ʼ", "'").replace("`", "'")
 
 
+def _strip_apostrophe(s: str) -> str:
+    """Apostrofni butunlay olib tashlaydi — "Kattaqo'rg'on" -> "Kattaqorgon".
+
+    Ko'pchilik xabarlarda apostrof umuman yozilmaydi (g'/o' tovushlari oddiy
+    g/o bilan yoziladi). Aliaslarni shu holatda ham topish uchun ishlatiladi.
+    """
+    return _norm_apostrophe(s).replace("'", "")
+
+
 def _find_city_in(text: str) -> Optional[str]:
     """Matnda eng birinchi uchragan shaharning kanonik nomini qaytaradi."""
     tl = _norm_apostrophe(text.lower())
+    tl_stripped = _strip_apostrophe(tl)
     best_idx = None
     best_city = None
     for alias, canon in CITY_ALIASES.items():
-        idx = tl.find(_norm_apostrophe(alias))
+        alias_n = _norm_apostrophe(alias)
+        idx = tl.find(alias_n)
+        if idx == -1:
+            idx = tl_stripped.find(_strip_apostrophe(alias_n))
         if idx != -1 and (best_idx is None or idx < best_idx):
             best_idx = idx
             best_city = canon
