@@ -139,6 +139,20 @@ def _check_driver(user) -> bool:
     return bool(user and user.role in _DRIVER_ROLES)
 
 
+async def _edit_or_answer(
+    callback: CallbackQuery, text: str, markup: InlineKeyboardMarkup | None
+) -> None:
+    """Callback xabarini joyida almashtiradi (menyu bosqichi bir xabarda qolsin).
+
+    Edit imkonsiz bo'lsa (eski xabar, "not modified" va h.k.) — yangi xabar
+    yuboradi, foydalanuvchi menyusiz qolmasin.
+    """
+    try:
+        await callback.message.edit_text(text, reply_markup=markup)
+    except TelegramAPIError:
+        await callback.message.answer(text, reply_markup=markup)
+
+
 async def _send_selection(
     callback: CallbackQuery, session: AsyncSession,
     origin: str, vehicle: str, region: str, offset: int,
@@ -152,6 +166,14 @@ async def _send_selection(
         return
 
     await callback.answer()
+    # Birinchi sahifada — oldingi menyu (borish viloyati) tugmalarini olib
+    # tashlaymiz, ekranda faqat yuklar qolsin. Sahifalashda (offset>0) tegmaymiz,
+    # chunki u pager tugmasidan keladi va o'sha xabar kerak.
+    if offset == 0:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except TelegramAPIError:
+            pass
     label = _VEHICLE_LABELS.get(vehicle, vehicle)
     start, end = offset + 1, offset + len(loads)
     await callback.message.answer(
@@ -176,9 +198,11 @@ async def _show_dest_menu(
         return
     await callback.answer()
     label = _VEHICLE_LABELS.get(vehicle, vehicle)
-    await callback.message.answer(
+    # Oldingi menyuni (mashina turi yoki viloyat) joyida almashtiramiz.
+    await _edit_or_answer(
+        callback,
         f"📥 <b>{origin}</b> {label} — qayerga? Borish viloyatini tanlang:",
-        reply_markup=_dest_menu_kb(origin, vehicle, dests),
+        _dest_menu_kb(origin, vehicle, dests),
     )
 
 
@@ -242,9 +266,11 @@ async def show_vehicle_menu(callback: CallbackQuery, session: AsyncSession) -> N
         return
 
     await callback.answer()
-    await callback.message.answer(
+    # Oldingi menyuni (viloyat ro'yxati) joyida almashtiramiz — ekran toza qolsin.
+    await _edit_or_answer(
+        callback,
         f"🚚 <b>{origin}</b> — mashina turini tanlang:",
-        reply_markup=_vehicle_menu_kb(origin, vehicle_counts),
+        _vehicle_menu_kb(origin, vehicle_counts),
     )
 
 

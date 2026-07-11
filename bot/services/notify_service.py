@@ -47,9 +47,15 @@ def _fmt(load: Load) -> str:
 
 
 def _take_kb(load_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🤝 Olish", callback_data=f"take_{load_id}")
-    ]])
+    """Xabarnoma tugmalari: yukni olish + xabarnoma yoqmasa o'chirish taklifi.
+
+    "🔕 O'chirish" — foydalanuvchi xabarnomadan bezovta bo'lsa, shu yerdan
+    darhol o'chira olsin (Sozlamalarga borishga hojat qolmasin).
+    """
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🤝 Olish", callback_data=f"take_{load_id}")],
+        [InlineKeyboardButton(text="🔕 Xabarnomani o'chirish", callback_data="notify_off")],
+    ])
 
 
 async def _notify_driver(bot: Bot, session, user: User) -> None:

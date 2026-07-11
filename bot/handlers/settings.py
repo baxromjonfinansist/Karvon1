@@ -108,6 +108,26 @@ async def notify_noop(callback: CallbackQuery) -> None:
     await callback.answer("🔔 Xabarnoma allaqachon yoqilgan")
 
 
+@router.callback_query(F.data == "notify_off")
+async def notify_off(callback: CallbackQuery, session: AsyncSession) -> None:
+    """Xabarnoma xabaridagi «🔕 Xabarnomani o'chirish» tugmasi."""
+    user = await get_or_none(session, callback.from_user.id)
+    if not user:
+        await callback.answer("Avval /start bosing.", show_alert=True)
+        return
+    if user.notify_enabled:
+        user.notify_enabled = False
+        await session.commit()
+    # Tugmalarni "qayta yoqish" holatiga o'zgartiramiz — foydalanuvchi
+    # fikridan qaytsa, bir bosishda tiklay olsin.
+    await callback.message.edit_reply_markup(
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="🔔 Xabarnomani qayta yoqish", callback_data="remind_enable")
+        ]])
+    )
+    await callback.answer("🔕 Xabarnoma o'chirildi", show_alert=True)
+
+
 @router.callback_query(F.data == "toggle_notify")
 async def toggle_notify(callback: CallbackQuery, session: AsyncSession) -> None:
     user = await get_or_none(session, callback.from_user.id)
