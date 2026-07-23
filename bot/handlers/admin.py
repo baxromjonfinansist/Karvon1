@@ -46,7 +46,7 @@ _ROLE_LABELS = {
 
 
 def _is_admin(telegram_id: int) -> bool:
-    return settings.ADMIN_ID is not None and telegram_id == settings.ADMIN_ID
+    return telegram_id in settings.admin_ids_list
 
 
 def _admin_menu_kb() -> ReplyKeyboardMarkup:

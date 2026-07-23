@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     ADMIN_ID: Optional[int] = None
 
+    # Bir nechta admin uchun, vergul bilan: 6445652739,7342626553
+    # ADMIN_ID (eski, yagona) bilan ham compat — ikkalasi ham hisobga olinadi.
+    ADMIN_IDS: str = ""
+
     # Test rejimi: True bo'lsa obuna talab qilinmaydi (hamma yuklarni ko'radi).
     # Pulli qilish uchun .env da FREE_MODE=false qiling va botni qayta ishga tushiring.
     FREE_MODE: bool = False
@@ -38,6 +42,21 @@ class Settings(BaseSettings):
 
     # Moderatsiyasiz auto-tasdiqlash chegarasi
     PARSER_AUTO_APPROVE_CONFIDENCE: float = 0.85
+
+    @property
+    def admin_ids_list(self) -> List[int]:
+        ids = set()
+        if self.ADMIN_ID is not None:
+            ids.add(self.ADMIN_ID)
+        if self.ADMIN_IDS:
+            for x in self.ADMIN_IDS.split(","):
+                x = x.strip()
+                if x:
+                    try:
+                        ids.add(int(x))
+                    except ValueError:
+                        pass
+        return list(ids)
 
     @property
     def channel_ids_list(self) -> List[int]:

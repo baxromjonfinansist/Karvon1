@@ -93,12 +93,12 @@ async def feedback_save(
         await session.commit()
 
     # Admin panelga ogohlantirish
-    if settings.ADMIN_ID:
-        who = user.full_name if user else message.from_user.full_name
-        phone = f" ({user.phone})" if user and user.phone else ""
+    who = user.full_name if user else message.from_user.full_name
+    phone = f" ({user.phone})" if user and user.phone else ""
+    for admin_id in settings.admin_ids_list:
         try:
             await bot.send_message(
-                settings.ADMIN_ID,
+                admin_id,
                 f"💬 <b>Yangi fikr-mulohaza</b>\n\n"
                 f"👤 {who}{phone}\n"
                 f"🆔 <code>{message.from_user.id}</code>\n\n"
