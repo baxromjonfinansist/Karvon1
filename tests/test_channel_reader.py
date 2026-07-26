@@ -99,6 +99,15 @@ def test_network_error_is_not_fatal():
     assert cr.is_fatal_auth_error(ConnectionError("timeout")) is False
 
 
+def test_unauthorized_session_is_fatal():
+    """Avtorizatsiyadan o'tmagan sessiya — interaktiv kod so'ramaslik uchun fatal.
+
+    `client.start()` bunday holatda terminalda kod so'raydi va systemd ostida
+    EOFError bilan har 30 soniyada takrorlanardi.
+    """
+    assert cr.is_fatal_auth_error(cr.ReaderNeedsLogin("sessiya yaroqsiz")) is True
+
+
 def test_backoff_grows_and_is_capped():
     delays = [cr.next_backoff(i) for i in range(1, 12)]
     assert delays[0] < delays[1] < delays[2]          # o'sadi

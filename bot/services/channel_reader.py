@@ -39,8 +39,14 @@ FATAL_AUTH_ERRORS = frozenset({
 })
 
 
+class ReaderNeedsLogin(RuntimeError):
+    """Sessiya avtorizatsiyadan o'tmagan — faqat qo'lda login yordam beradi."""
+
+
 def is_fatal_auth_error(exc: BaseException) -> bool:
     """Sessiya bekor qilinganmi (retry foydasiz, qayta login shart)?"""
+    if isinstance(exc, ReaderNeedsLogin):
+        return True
     return type(exc).__name__ in FATAL_AUTH_ERRORS
 
 
@@ -362,7 +368,15 @@ async def start_reader(_dp: object = None) -> None:
     _client = TelegramClient(
         get_session_path(), settings.TELEGRAM_API_ID, settings.TELEGRAM_API_HASH
     )
-    await _client.start(phone=settings.TELEGRAM_PHONE or None)
+    # `client.start()` ISHLATILMAYDI: sessiya avtorizatsiyadan o'tmagan bo'lsa u
+    # terminalda kod so'raydi — systemd ostida stdin yo'q va `EOFError` bilan
+    # yiqiladi (har 30 soniyada takrorlanadi). Shu sabab avtorizatsiyani o'zimiz
+    # tekshiramiz va adminni qayta login qilishga chaqiramiz.
+    await _client.connect()
+    if not await _client.is_user_authorized():
+        raise ReaderNeedsLogin(
+            "Telethon sessiya avtorizatsiyadan o'tmagan (kalit bekor qilingan)"
+        )
     _running = True
 
     # Har kanal uchun mavzu→viloyat xaritasi (oddiy guruh uchun None)
