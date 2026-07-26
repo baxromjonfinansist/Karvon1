@@ -209,6 +209,34 @@ def test_topic_map_without_viloyat_topics_falls_back_to_text():
     assert asyncio.run(cr._build_topic_map(client, -100123)) is None
 
 
+def test_one_bad_channel_does_not_stop_the_others(monkeypatch):
+    """Bitta kanal yechilmasa — qolgan kanallardan yuk kelishi davom etadi."""
+    async def fake_map(client, cid):
+        if cid == -100999:
+            raise ValueError("Could not find the input entity")
+        return {5: "Andijon"}
+
+    monkeypatch.setattr(cr, "_build_topic_map", fake_map)
+    monkeypatch.setattr(cr, "status", rs.ReaderStatus())
+
+    maps = asyncio.run(cr._build_topic_maps(None, [-100111, -100999, -100222]))
+
+    assert list(maps.keys()) == [-100111, -100222]
+    assert "XATO" in cr.status.channels[-100999]
+
+
+def test_all_channels_failing_raises(monkeypatch):
+    """Hamma kanal xato bo'lsa — supervisor qayta urishi uchun xato ko'tariladi."""
+    async def fake_map(client, cid):
+        raise ValueError("entity yo'q")
+
+    monkeypatch.setattr(cr, "_build_topic_map", fake_map)
+    monkeypatch.setattr(cr, "status", rs.ReaderStatus())
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(cr._build_topic_maps(None, [-100111, -100222]))
+
+
 def test_topic_map_error_raises_for_retry():
     """Kutilmagan xato -> ko'tariladi (supervisor qayta uradi), jim yutilmaydi."""
     client = _FakeClient(exc=ConnectionError("dc timeout"))

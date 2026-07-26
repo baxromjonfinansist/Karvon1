@@ -127,6 +127,56 @@ async def _build_topic_map(client, channel_id) -> Optional[dict]:
     return region_by_topic
 
 
+async def _prime_entity_cache(client) -> None:
+    """Dialoglarni bir marta o'qib, entity keshini to'ldiradi.
+
+    YANGI sessiyada kesh bo'sh bo'ladi va kanal ID si bo'yicha murojaat
+    "Could not find the input entity for PeerChannel(...)" xatosini beradi.
+    Dialoglarni o'qish — Telethon'ning standart yechimi.
+    """
+    try:
+        dialogs = await client.get_dialogs(limit=None)
+        log.info("Entity keshi to'ldirildi: %d dialog.", len(dialogs))
+    except Exception as exc:  # noqa: BLE001
+        if is_fatal_auth_error(exc):
+            raise
+        log.warning("Dialoglarni o'qib bo'lmadi (entity keshi): %s", exc)
+
+
+async def _build_topic_maps(client, channel_ids) -> dict:
+    """Har kanal uchun {cid: mavzu xaritasi}. Xato kanal O'TKAZIB YUBORILADI.
+
+    Bitta kanal (masalan a'zolikdan chiqarilgan guruh) butun reader'ni
+    to'xtatmasligi kerak — qolgan kanallardan yuk kelishi davom etadi.
+    Hech qaysi kanal sozlanmasa — xato ko'tariladi (supervisor qayta uradi).
+    """
+    topic_maps: dict = {}
+    failed: list = []
+    for cid in channel_ids:
+        try:
+            tm = await _build_topic_map(client, cid)
+        except Exception as exc:  # noqa: BLE001
+            if is_fatal_auth_error(exc):
+                raise
+            log.error("Kanal %s sozlanmadi — o'tkazib yuborildi: %s", cid, exc)
+            status.note_channel(cid, f"XATO: {type(exc).__name__}")
+            failed.append(cid)
+            continue
+        topic_maps[cid] = tm
+        desc = "oddiy guruh (yo'nalish matndan)" if tm is None else f"forum, {len(tm)} viloyat mavzusi"
+        status.note_channel(cid, desc)
+        log.info("Kanal %s — %s", cid, desc)
+
+    if not topic_maps:
+        raise RuntimeError(
+            f"Hech qaysi kanal sozlanmadi ({len(failed)} ta xato) — "
+            "kanal ID lari va a'zolikni tekshiring"
+        )
+    if failed:
+        log.warning("%d kanal o'tkazib yuborildi: %s", len(failed), failed)
+    return topic_maps
+
+
 def prepare_message(
     text: str, regions: Optional[dict], topic_id: Optional[int]
 ):
@@ -379,17 +429,13 @@ async def start_reader(_dp: object = None) -> None:
         )
     _running = True
 
-    # Har kanal uchun mavzu→viloyat xaritasi (oddiy guruh uchun None)
-    topic_maps: dict = {}
-    for cid in channel_ids:
-        tm = await _build_topic_map(_client, cid)
-        topic_maps[cid] = tm
-        if tm is None:
-            desc = "oddiy guruh (yo'nalish matndan)"
-        else:
-            desc = f"forum, {len(tm)} viloyat mavzusi"
-        status.note_channel(cid, desc)
-        log.info("Kanal %s — %s", cid, desc)
+    # Yangi sessiyada entity keshi bo'sh — kanal ID lari yechilmaydi.
+    await _prime_entity_cache(_client)
+
+    # Har kanal uchun mavzu→viloyat xaritasi (oddiy guruh uchun None).
+    # Sozlanmagan kanallar ro'yxatdan chiqadi — qolganlari ishlaydi.
+    topic_maps = await _build_topic_maps(_client, channel_ids)
+    channel_ids = list(topic_maps.keys())
 
     status.mark_running()
     log.info("Telethon kanal o'quvchi (polling) ulandi ✅")
