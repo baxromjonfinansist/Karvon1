@@ -7,6 +7,12 @@ Terminalda ishga tushiring:
 • 2FA parolingiz YASHIRIN so'raladi (ekranda ko'rinmaydi) va HECH QAYERGA saqlanmaydi.
 • Login bo'lgach sessiya `data/telethon_session` ga saqlanadi — keyin parol qayta so'ralmaydi.
 • Oxirida guruh/kanallaringiz ro'yxati ID lari bilan chiqadi.
+
+MUHIM: bu ASOSIY (bot reader) sessiyasi. Uni faqat BITTA mashinada
+(serverda) ishlatish kerak — bir vaqtda ikki joyda ishlatilsa Telegram
+auth key ni bekor qiladi va yuklar o'qilmay qoladi.
+Yordamchi skriptlar uchun alohida sessiya:
+    TELETHON_SESSION_NAME=helper_session python3 scripts/telethon_login.py
 """
 from __future__ import annotations
 
@@ -27,8 +33,10 @@ async def main() -> None:
         print("❌ .env da TELEGRAM_API_ID / TELEGRAM_API_HASH yo'q.")
         return
 
+    session_path = get_session_path()
+    print(f"Sessiya fayli: {session_path}")
     client = TelegramClient(
-        get_session_path(),
+        session_path,
         settings.TELEGRAM_API_ID,
         settings.TELEGRAM_API_HASH,
     )

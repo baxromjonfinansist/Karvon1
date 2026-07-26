@@ -10,12 +10,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from telethon import TelegramClient, functions  # noqa: E402
 
 from bot.config import settings  # noqa: E402
-from bot.services.session_manager import get_session_path  # noqa: E402
+from bot.services.session_manager import get_script_session_path  # noqa: E402
 
 
 async def main() -> None:
     client = TelegramClient(
-        get_session_path(), settings.TELEGRAM_API_ID, settings.TELEGRAM_API_HASH
+        get_script_session_path(), settings.TELEGRAM_API_ID, settings.TELEGRAM_API_HASH
     )
     await client.connect()
     if not await client.is_user_authorized():

@@ -172,10 +172,14 @@ async def classify_phone_db(
     now = now or datetime.utcnow()
     window_start = now - timedelta(hours=WINDOW_HOURS)
 
+    # Oyna IKKI tomonlama chegaralangan: `posted_at <= now`. Aks holda
+    # backfill'da eski xabar o'zidan KEYIN kelgan yo'nalishlarni ham sanaydi
+    # va bir necha yuk beruvchi noto'g'ri LOGIST deb bloklanadi.
     result = await session.execute(
         select(LorryListing.origin_canon, LorryListing.dest_canon).where(
             LorryListing.phone_norm == phone,
             LorryListing.posted_at >= window_start,
+            LorryListing.posted_at <= now,
         )
     )
     routes: list[tuple[Optional[str], Optional[str]]] = [(o, d) for (o, d) in result.all()]

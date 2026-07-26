@@ -13,7 +13,7 @@ from aiogram.types import BotCommand, TelegramObject, Update
 from bot.config import settings
 from bot.handlers import admin, driver, fallback, misc, provider, start
 from bot.handlers import settings as settings_handler
-from bot.services.channel_reader import start_reader, stop_reader
+from bot.services.channel_reader import run_reader_forever, stop_reader
 from bot.services.notify_service import (
     notify_loop,
     reminder_loop,
@@ -47,6 +47,21 @@ class DbSessionMiddleware:
             return await handler(event, data)
 
 
+def _log_task_exception(task: asyncio.Task) -> None:
+    """Fon task'i xato bilan tugasa — logga chiqaramiz.
+
+    Aks holda `create_task` xatoni jim yutadi (kanal o'quvchi shu sabab
+    sezilmasdan o'lib qolgan edi).
+    """
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logging.getLogger(__name__).error(
+            "Fon task'i xato bilan tugadi: %s", exc, exc_info=exc
+        )
+
+
 def _telegram_id_of(event: TelegramObject) -> int | None:
     """Update ichidan foydalanuvchi Telegram ID sini oladi (message/callback)."""
     if isinstance(event, Update):
@@ -72,15 +87,19 @@ async def main() -> None:
         await seed_default_routes(session)
     log.info("Routes seed ✅")
 
-    reader_task = None
-    if settings.TELEGRAM_API_ID and settings.channel_ids_list:
-        reader_task = asyncio.create_task(start_reader())
-        log.info("Kanal o'quvchi task yaratildi ✅")
-
     bot = Bot(
         token=settings.BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
+
+    # Kanal o'quvchi — supervisor ostida: xato bo'lsa qayta ulanadi, sessiya
+    # bekor bo'lsa adminga xabar beradi. `bot` kerak (ogohlantirish uchun),
+    # shu sabab Bot yaratilgandan KEYIN ishga tushiriladi.
+    reader_task = None
+    if settings.TELEGRAM_API_ID and settings.channel_ids_list:
+        reader_task = asyncio.create_task(run_reader_forever(bot))
+        reader_task.add_done_callback(_log_task_exception)
+        log.info("Kanal o'quvchi task yaratildi ✅")
 
     # Slash-buyruqlar menyusi ("/" bosilganda ko'rinadi) — keyin kengaytiriladi.
     await bot.set_my_commands([

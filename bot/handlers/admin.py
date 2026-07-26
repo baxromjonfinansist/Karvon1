@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from aiogram import Bot, F, Router
@@ -24,6 +25,7 @@ from bot.services.logist_service import (
     list_logist_phones,
     remove_logist_phone,
 )
+from bot.services.reader_status import status as reader_status
 from bot.services.user_service import (
     get_activity_dashboard,
     get_or_none,
@@ -92,6 +94,34 @@ async def cmd_admin(message: Message) -> None:
         "👨‍💼 <b>Admin paneli</b>\n\nBo'limni tanlang:",
         reply_markup=_admin_menu_kb(),
     )
+
+
+# ---------------------------------------------------------------------------
+# /reader — kanal o'quvchi holati (yuk kelmasa BIRINCHI shu tekshiriladi)
+# ---------------------------------------------------------------------------
+
+@router.message(Command("reader"))
+async def cmd_reader(message: Message, session: AsyncSession) -> None:
+    """Kanal o'quvchi tirikmi, xabarlar qaysi bosqichda tushib qolyapti."""
+    if not _is_admin(message.from_user.id):
+        return
+
+    total_loads = await session.scalar(select(func.count(Load.id))) or 0
+    last_posted = await session.scalar(select(func.max(Load.posted_at)))
+    last_24h = await session.scalar(
+        select(func.count(Load.id)).where(
+            Load.posted_at >= datetime.utcnow() - timedelta(hours=24)
+        )
+    ) or 0
+
+    lines = [
+        "🛠 <b>Kanal o'quvchi holati</b>\n",
+        f"<pre>{reader_status.render()}</pre>",
+        f"\n📦 Bazadagi yuklar: <b>{total_loads}</b> (24 soatda: {last_24h})",
+        f"🕒 Oxirgi yuk vaqti: "
+        f"{last_posted.strftime('%d.%m %H:%M') if last_posted else '—'}",
+    ]
+    await message.answer("\n".join(lines))
 
 
 # ---------------------------------------------------------------------------
