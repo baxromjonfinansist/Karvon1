@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from html import escape
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,9 +16,9 @@ from aiogram.types import (
 )
 
 
-from bot.config import settings
 from bot.services.load_service import (
     delete_stale_loads,
+    format_load_card,
     get_destination_regions,
     get_driver_deals,
     get_load_detail,
@@ -28,14 +27,13 @@ from bot.services.load_service import (
     get_vehicle_counts_by_origin,
     take_load,
 )
-from bot.services.parser_service import extract_body
 from bot.services.rating_service import (
     get_deal_for_rating,
     get_pending_ratings,
     has_rated,
     submit_rating,
 )
-from bot.services.user_service import get_active_subscription, get_or_none, is_subscribed
+from bot.services.user_service import get_or_none
 from bot.states import RatingFlow
 from db.models import LoadStatus, User, UserRole
 
@@ -57,14 +55,8 @@ def _fmt_price(price) -> str:
 
 
 def _fmt_load(load) -> str:
-    """Shablon: 1-qator yo'nalish, 2-qator telefon, 3-qator manbadagi
-    barcha ma'lumot (yo'nalish va telefondan tashqari)."""
-    route = (
-        f"{load.route.origin} → {load.route.destination}" if load.route else "—"
-    )
-    phone = load.contact_phone or "—"
-    body = extract_body(load.raw_text or "", load.contact_phone) or load.note or load.cargo_type or "—"
-    return f"🚚 <b>{route}</b>\n📞 {phone}\n📝 {escape(body)}"
+    """Yuk kartasi — umumiy formatlovchi (feed va xabarnoma bir xil ko'rinadi)."""
+    return format_load_card(load)
 
 
 def _take_kb(load_id: int) -> InlineKeyboardMarkup:
@@ -217,18 +209,12 @@ async def show_feed(message: Message, session: AsyncSession) -> None:
         await message.answer("Bu bo'lim faqat haydovchilar uchun.")
         return
 
-    if not settings.FREE_MODE and not await is_subscribed(session, user):
-        await message.answer(
-            "❌ Obuna faol emas.\n\n"
-            "/subscribe buyrug'ini yuboring yoki admin bilan bog'laning."
-        )
-        return
-
     # Dashboard uchun: yuk feed'ini haqiqatan ochgan haydovchini belgilaymiz.
     user.last_feed_view_at = datetime.utcnow()
     await session.commit()
 
-    await delete_stale_loads(session)  # 10 daqiqadan eski yuklarni tozalaymiz
+    # Qo'shimcha tozalash (asosiysi — notify_service dagi fon sikli).
+    await delete_stale_loads(session)
 
     regions = await get_origin_regions_with_open_loads(session)
     if not regions:
@@ -248,9 +234,6 @@ async def show_vehicle_menu(callback: CallbackQuery, session: AsyncSession) -> N
     user = await get_or_none(session, callback.from_user.id)
     if not _check_driver(user):
         await callback.answer("Ruxsat yo'q.", show_alert=True)
-        return
-    if not settings.FREE_MODE and not await is_subscribed(session, user):
-        await callback.answer("❌ Obuna faol emas.", show_alert=True)
         return
 
     await delete_stale_loads(session)
@@ -282,9 +265,6 @@ async def show_destinations(callback: CallbackQuery, session: AsyncSession) -> N
     if not _check_driver(user):
         await callback.answer("Ruxsat yo'q.", show_alert=True)
         return
-    if not settings.FREE_MODE and not await is_subscribed(session, user):
-        await callback.answer("❌ Obuna faol emas.", show_alert=True)
-        return
 
     await delete_stale_loads(session)
     await _show_dest_menu(callback, session, origin, vehicle)
@@ -298,9 +278,6 @@ async def show_dest_loads(callback: CallbackQuery, session: AsyncSession) -> Non
     if not _check_driver(user):
         await callback.answer("Ruxsat yo'q.", show_alert=True)
         return
-    if not settings.FREE_MODE and not await is_subscribed(session, user):
-        await callback.answer("❌ Obuna faol emas.", show_alert=True)
-        return
 
     await delete_stale_loads(session)
     await _send_selection(callback, session, origin, vehicle, region, offset=0)
@@ -313,9 +290,6 @@ async def show_more_loads(callback: CallbackQuery, session: AsyncSession) -> Non
     user = await get_or_none(session, callback.from_user.id)
     if not _check_driver(user):
         await callback.answer("Ruxsat yo'q.", show_alert=True)
-        return
-    if not settings.FREE_MODE and not await is_subscribed(session, user):
-        await callback.answer("❌ Obuna faol emas.", show_alert=True)
         return
 
     await _send_selection(callback, session, origin, vehicle, region, offset=int(offset))
@@ -332,10 +306,6 @@ async def take_load_cb(callback: CallbackQuery, session: AsyncSession) -> None:
     user = await get_or_none(session, callback.from_user.id)
     if not user or user.role not in _DRIVER_ROLES:
         await callback.answer("Ruxsat yo'q.", show_alert=True)
-        return
-
-    if not settings.FREE_MODE and not await is_subscribed(session, user):
-        await callback.answer("❌ Obuna faol emas.", show_alert=True)
         return
 
     load = await get_load_detail(session, load_id)
@@ -368,10 +338,6 @@ async def take_confirm_cb(callback: CallbackQuery, session: AsyncSession, bot: B
     user = await get_or_none(session, callback.from_user.id)
     if not user or user.role not in _DRIVER_ROLES:
         await callback.answer("Ruxsat yo'q.", show_alert=True)
-        return
-
-    if not settings.FREE_MODE and not await is_subscribed(session, user):
-        await callback.answer("❌ Obuna faol emas.", show_alert=True)
         return
 
     load = await get_load_detail(session, load_id)
@@ -481,10 +447,6 @@ async def show_deals(message: Message, session: AsyncSession) -> None:
             reply_markup=kb,
         )
 
-
-# ---------------------------------------------------------------------------
-# 💳 Obunam
-# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # ⭐ Reyting berish — driver tomonidan
@@ -606,34 +568,3 @@ async def rating_comment(
         f"✅ <b>Rahmat! Reytingiz qabul qilindi.</b>\n\n"
         f"Baholangan foydalanuvchi reytingi: ⭐ {rating_str}"
     )
-
-
-# ---------------------------------------------------------------------------
-# 💳 Obunam
-# ---------------------------------------------------------------------------
-
-@router.message(F.text == "💳 Obunam")
-async def show_subscription(message: Message, session: AsyncSession) -> None:
-    user = await get_or_none(session, message.from_user.id)
-    if not user:
-        await message.answer("Avval /start buyrug'ini yuboring.")
-        return
-
-    if await is_subscribed(session, user):
-        sub = await get_active_subscription(session, user)
-        end_text = sub.end_date.strftime("%d.%m.%Y") if sub else "—"
-        plan = sub.plan.value.title() if sub else "—"
-        await message.answer(
-            f"✅ <b>Obuna faol</b>\n\n"
-            f"Reja: {plan}\n"
-            f"Muddati tugashi: {end_text}"
-        )
-    else:
-        await message.answer(
-            "❌ <b>Obuna yo'q</b>\n\n"
-            "Obuna narxlari:\n"
-            "• Basic — 150 000 so'm/oy\n"
-            "• Premium — 300 000 so'm/oy\n\n"
-            "To'lov tizimi tez orada ulanadi.\n"
-            "Admin bilan bog'laning: @admin_username"
-        )

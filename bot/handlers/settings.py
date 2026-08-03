@@ -11,11 +11,7 @@ from aiogram.types import (
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.keyboards import role_choice_kb
-from bot.services.user_service import (
-    get_active_subscription,
-    get_or_none,
-    is_subscribed,
-)
+from bot.services.user_service import get_or_none
 from db.models import UserRole
 
 router = Router(name="settings")
@@ -51,17 +47,8 @@ async def show_profile(message: Message, session: AsyncSession) -> None:
     rating = f"{user.rating:.1f}" if user.rating is not None else "—"
     phone = user.phone or "—"
 
-    if await is_subscribed(session, user):
-        sub = await get_active_subscription(session, user)
-        if sub:
-            sub_line = (
-                f"✅ Faol — {sub.plan.value.title()} "
-                f"(tugashi: {sub.end_date.strftime('%d.%m.%Y')})"
-            )
-        else:
-            sub_line = "✅ Faol"
-    else:
-        sub_line = "❌ Faol emas"
+    # «💳 Obuna» qatori vaqtincha yashirilgan (Faza 1.3) — foydalanuvchilar
+    # bazasi yig'ilgunicha obuna tushunchasi ko'rsatilmaydi. Kod saqlangan.
 
     notify_line = ""
     if user.role in _DRIVER_ROLES:
@@ -74,8 +61,7 @@ async def show_profile(message: Message, session: AsyncSession) -> None:
         f"👤 Ism: {user.full_name}\n"
         f"📞 Telefon: {phone}\n"
         f"🎭 Rol: {role_label}\n"
-        f"⭐ Reyting: {rating}\n"
-        f"💳 Obuna: {sub_line}"
+        f"⭐ Reyting: {rating}"
         f"{notify_line}\n"
         f"🆔 Telegram ID: <code>{user.telegram_id}</code>",
         reply_markup=_profile_kb(user),

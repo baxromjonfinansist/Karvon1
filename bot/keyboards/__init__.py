@@ -56,7 +56,8 @@ def pref_viloyat_kb(viloyats_with_counts, prefix: str) -> InlineKeyboardMarkup:
 def main_menu_driver_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📦 Yuklar"), KeyboardButton(text="💳 Obunam")],
+            # «💳 Obunam» vaqtincha yashirilgan (Faza 1.3) — keyin qaytariladi.
+            [KeyboardButton(text="📦 Yuklar")],
             [KeyboardButton(text="📋 Bitimlarim"), KeyboardButton(text="⚙️ Sozlamalar")],
             [KeyboardButton(text="💬 Fikr-mulohaza"), KeyboardButton(text="📞 Murojaat")],
             [KeyboardButton(text="🏠 Asosiy bo'lim")],

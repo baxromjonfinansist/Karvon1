@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
-from html import escape
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
@@ -11,10 +10,11 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
-from bot.config import settings
-from bot.services.load_service import _dest_region
-from bot.services.parser_service import extract_body
-from bot.services.user_service import is_subscribed
+from bot.services.load_service import (
+    _dest_region,
+    delete_stale_loads,
+    format_load_card,
+)
 from db.database import AsyncSessionLocal
 from db.models import Load, LoadStatus, Route, User, UserRole
 
@@ -35,15 +35,8 @@ _reminder_running = False
 
 
 def _fmt(load: Load) -> str:
-    """Yangi yuk xabarnomasi — shablon: yo'nalish, telefon, manba ma'lumoti."""
-    route = f"{load.route.origin} → {load.route.destination}" if load.route else "—"
-    body = extract_body(load.raw_text or "", load.contact_phone) or load.note or load.cargo_type or "—"
-    return (
-        "🔔 <b>Yangi yuk!</b>\n"
-        f"🚚 <b>{route}</b>\n"
-        f"📞 {load.contact_phone or '—'}\n"
-        f"📝 {escape(body)}"
-    )
+    """Yangi yuk xabarnomasi — karta feed'dagi bilan bir xil (umumiy formatlovchi)."""
+    return "🔔 <b>Yangi yuk!</b>\n" + format_load_card(load)
 
 
 def _take_kb(load_id: int) -> InlineKeyboardMarkup:
@@ -105,8 +98,6 @@ async def _run_once(bot: Bot) -> None:
         )
         drivers = list(result.scalars().all())
         for user in drivers:
-            if not settings.FREE_MODE and not await is_subscribed(session, user):
-                continue
             try:
                 await _notify_driver(bot, session, user)
             except Exception as exc:  # noqa: BLE001
@@ -114,8 +105,20 @@ async def _run_once(bot: Bot) -> None:
         await session.commit()
 
 
+async def cleanup_stale_loads() -> int:
+    """Eskirgan (FRESH_MINUTES dan oshgan) ochiq yuklarni fon rejimida o'chiradi.
+
+    Ilgari tozalash faqat haydovchi «📦 Yuklar» bosganda ishlagan — shuning
+    uchun yuk soni to'lqin-to'lqin sakrardi. Endi asosiy tozalovchi shu.
+    """
+    async with AsyncSessionLocal() as session:
+        deleted = await delete_stale_loads(session)
+    log.info("Eskirgan yuklar tozalandi: %d ta.", deleted)
+    return deleted
+
+
 async def notify_loop(bot: Bot) -> None:
-    """Har 10 daqiqada opt-in haydovchilarga yo'nalishi bo'yicha yangi yuk yuboradi."""
+    """Har 10 daqiqada: yangi yuk xabarnomasi + eskirgan yuklarni tozalash."""
     global _running
     _running = True
     log.info("Xabarnoma xizmati ishga tushdi (har %ss).", NOTIFY_INTERVAL)
@@ -125,6 +128,11 @@ async def notify_loop(bot: Bot) -> None:
             await _run_once(bot)
         except Exception as exc:  # noqa: BLE001
             log.error("Xabarnoma sikl xatosi: %s", exc)
+        # Tozalash alohida try — xatosi xabarnomani to'xtatmasin.
+        try:
+            await cleanup_stale_loads()
+        except Exception as exc:  # noqa: BLE001
+            log.error("Eskirgan yuklarni tozalash xatosi: %s", exc)
 
 
 def stop_notify() -> None:

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from html import escape
 from typing import Optional
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
+from bot.services.parser_service import extract_body
 from db.models import (
     Deal, DealStatus, Load, LoadStatus,
     Route, User, UserRole, VehicleType, driver_preferred_routes,
@@ -15,11 +17,63 @@ from db.models import (
 
 # Yuk faqat shuncha daqiqa "yangi" hisoblanadi — undan eskisi ko'rsatilmaydi
 # va bazadan avtomatik o'chiriladi. Feed shu oynadagi yuklarni ko'rsatadi.
-FRESH_MINUTES = 120
+FRESH_MINUTES = 360   # 6 soat
+
+# Shu vaqtdan yangi yuk "hozir" deb ko'rsatiladi.
+_JUST_NOW_MINUTES = 5
 
 
 def _fresh_cutoff() -> datetime:
     return datetime.utcnow() - timedelta(minutes=FRESH_MINUTES)
+
+
+def humanize_age(posted_at: Optional[datetime], now: Optional[datetime] = None) -> str:
+    """Yuk yoshini o'zbekcha matnga aylantiradi: "hozir", "25 daqiqa oldin",
+    "2 soat oldin", "1 kun oldin".
+
+    Bazadagi vaqtlar naive UTC (`datetime.utcnow`) — tz-aware qiymat kelsa
+    UTC ga o'tkazib naive qilamiz, aks holda ayirish xato beradi.
+    posted_at bo'lmasa bo'sh satr (karta qatorisiz qoladi).
+    """
+    if posted_at is None:
+        return ""
+    if posted_at.tzinfo is not None:
+        posted_at = posted_at.astimezone(timezone.utc).replace(tzinfo=None)
+    if now is None:
+        now = datetime.utcnow()
+    elif now.tzinfo is not None:
+        now = now.astimezone(timezone.utc).replace(tzinfo=None)
+
+    minutes = int((now - posted_at).total_seconds() // 60)
+    if minutes < _JUST_NOW_MINUTES:   # manfiy (kelajak) ham shu yerga tushadi
+        return "hozir"
+    if minutes < 60:
+        return f"{minutes} daqiqa oldin"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours} soat oldin"
+    return f"{hours // 24} kun oldin"
+
+
+def format_load_card(load, now: Optional[datetime] = None) -> str:
+    """Yuk kartasining umumiy ko'rinishi — feed va xabarnoma bir xil bo'lsin.
+
+    Qatorlar: yo'nalish, telefon, yosh, manbadagi qolgan ma'lumot.
+    """
+    route = f"{load.route.origin} → {load.route.destination}" if load.route else "—"
+    body = (
+        extract_body(load.raw_text or "", load.contact_phone)
+        or load.note or load.cargo_type or "—"
+    )
+    lines = [
+        f"🚚 <b>{route}</b>",
+        f"📞 {load.contact_phone or '—'}",
+    ]
+    age = humanize_age(getattr(load, "posted_at", None), now)
+    if age:
+        lines.append(f"🕒 {age}")
+    lines.append(f"📝 {escape(body)}")
+    return "\n".join(lines)
 
 
 async def delete_stale_loads(session: AsyncSession) -> int:
