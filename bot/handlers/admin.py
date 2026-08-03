@@ -58,6 +58,8 @@ def _admin_menu_kb() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="📋 Moderatsiya"), KeyboardButton(text="👥 Foydalanuvchilar")],
             [KeyboardButton(text="📊 Statistika"), KeyboardButton(text="📈 Dashboard")],
+            # Faza 4.2 — sahifalangan/filtrlangan userlar ro'yxati (admin_users.py).
+            [KeyboardButton(text="📇 Userlar ro'yxati")],
         ],
         resize_keyboard=True,
     )

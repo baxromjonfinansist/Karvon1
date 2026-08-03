@@ -254,6 +254,36 @@ async def get_activity_dashboard(session: AsyncSession) -> dict:
     }
 
 
+_DRIVER_LIKE_ROLES = (UserRole.driver, UserRole.asset_owner, UserRole.staff_driver)
+
+
+async def list_users(
+    session: AsyncSession,
+    role_filter: Optional[str] = None,
+    offset: int = 0,
+    limit: int = 10,
+) -> tuple[list[User], bool]:
+    """Admin «Userlar ro'yxati» uchun sahifalangan foydalanuvchilar (Faza 4.2).
+
+    `role_filter`: None/"all" — barchasi; "driver" — driver + eski
+    asset_owner/staff_driver (hali migratsiya qilmagan bo'lishi mumkin);
+    "cargo_provider" — faqat yuk beruvchilar. Eng yangi ro'yxatdan
+    o'tganlar birinchi. Qaytaradi: (sahifa, yana_bormi).
+    """
+    result = await session.execute(select(User).order_by(User.created_at.desc()))
+    rows = list(result.scalars().all())
+
+    if role_filter == "driver":
+        rows = [u for u in rows if u.role in _DRIVER_LIKE_ROLES]
+    elif role_filter == "cargo_provider":
+        rows = [u for u in rows if u.role == UserRole.cargo_provider]
+    # None yoki "all" — filtrsiz, barcha rollar.
+
+    page = rows[offset:offset + limit]
+    has_more = len(rows) > offset + limit
+    return page, has_more
+
+
 async def seed_default_routes(session: AsyncSession) -> None:
     """Agar routes jadvali bo'sh bo'lsa, 5 ta standart yo'nalish qo'shadi."""
     result = await session.execute(select(Route).limit(1))

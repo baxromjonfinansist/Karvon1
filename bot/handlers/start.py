@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from aiogram import F, Router
+import logging
+
+from aiogram import Bot, F, Router
 from aiogram.filters import CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
@@ -12,6 +14,7 @@ from aiogram.types import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from bot.handlers.admin_users import notify_admins_new_user
 from bot.keyboards import (
     BACK_TEXT,
     back_reply_kb,
@@ -33,6 +36,7 @@ from bot.states import DriverReg, ProviderReg, RoleChange
 from db.models import UserRole, VehicleType
 
 router = Router(name="start")
+log = logging.getLogger(__name__)
 
 # Faza 3.1: rollar 2 taga qisqartirildi — "🏭 Asset egasi" endi yangi
 # ro'yxatga olishda taklif qilinmaydi (UserRole.asset_owner qiymati saqlanadi,
@@ -62,6 +66,20 @@ def _normalize_phone(raw: str) -> str | None:
     if len(digits) == 12 and digits.startswith("998"):
         return "+" + digits
     return None
+
+
+async def _notify_admins_safe(bot: "Bot | None", user) -> None:
+    """Ro'yxatdan o'tish tugagach adminlarga xabar (Faza 4.1).
+
+    `bot` berilmasa (masalan test/monkeypatch) — jim o'tadi. Xato bo'lsa ham
+    asosiy ro'yxatdan o'tish oqimi UZILMASIN — faqat log.
+    """
+    if bot is None:
+        return
+    try:
+        await notify_admins_new_user(bot, user)
+    except Exception:
+        log.exception("notify_admins_new_user kutilmagan xato bilan tugadi")
 
 
 async def _send_main_menu(message: Message, role: UserRole) -> None:
@@ -371,7 +389,9 @@ async def driver_notify_back(
 
 
 @router.callback_query(DriverReg.waiting_notify, F.data.in_(["notify_yes", "notify_no"]))
-async def driver_notify_choice(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+async def driver_notify_choice(
+    callback: CallbackQuery, state: FSMContext, session: AsyncSession, bot: Bot | None = None
+) -> None:
     notify = callback.data == "notify_yes"
     data = await state.get_data()
 
@@ -380,7 +400,8 @@ async def driver_notify_choice(callback: CallbackQuery, state: FSMContext, sessi
     vehicle_type = VEHICLE_TYPE_MAP.get(data.get("vehicle_type"))
     capacity_t = data.get("capacity_t")
 
-    if data.get("reregister"):
+    is_reregister = bool(data.get("reregister"))
+    if is_reregister:
         user = await get_or_none(session, callback.from_user.id)
         user = await update_user_role(
             session, user,
@@ -408,6 +429,10 @@ async def driver_notify_choice(callback: CallbackQuery, state: FSMContext, sessi
 
     await session.commit()
     await state.clear()
+
+    # Faza 4.1: faqat YANGI ro'yxatdan o'tishda xabar — rol almashtirishda (reregister) emas.
+    if not is_reregister:
+        await _notify_admins_safe(bot, user)
 
     notify_line = (
         "🔔 Xabarnoma yoqildi — yangi yuklar avtomatik keladi."
@@ -456,13 +481,17 @@ async def provider_phone_back(message: Message, state: FSMContext) -> None:
 
 
 @router.message(ProviderReg.waiting_phone, F.contact)
-async def provider_phone_contact(message: Message, state: FSMContext, session: AsyncSession) -> None:
+async def provider_phone_contact(
+    message: Message, state: FSMContext, session: AsyncSession, bot: Bot | None = None
+) -> None:
     phone = message.contact.phone_number
-    await _finish_provider_reg(message, state, session, phone)
+    await _finish_provider_reg(message, state, session, phone, bot)
 
 
 @router.message(ProviderReg.waiting_phone, F.text)
-async def provider_phone_text(message: Message, state: FSMContext, session: AsyncSession) -> None:
+async def provider_phone_text(
+    message: Message, state: FSMContext, session: AsyncSession, bot: Bot | None = None
+) -> None:
     phone = _normalize_phone(message.text or "")
     if phone is None:
         await message.answer(
@@ -470,7 +499,7 @@ async def provider_phone_text(message: Message, state: FSMContext, session: Asyn
             "«📱 Raqamni yuborish» tugmasini bosing."
         )
         return
-    await _finish_provider_reg(message, state, session, phone)
+    await _finish_provider_reg(message, state, session, phone, bot)
 
 
 async def _finish_provider_reg(
@@ -478,10 +507,12 @@ async def _finish_provider_reg(
     state: FSMContext,
     session: AsyncSession,
     phone: str,
+    bot: Bot | None = None,
 ) -> None:
     data = await state.get_data()
 
-    if data.get("reregister"):
+    is_reregister = bool(data.get("reregister"))
+    if is_reregister:
         user = await get_or_none(session, message.from_user.id)
         user = await update_user_role(
             session, user,
@@ -499,6 +530,10 @@ async def _finish_provider_reg(
         )
     await session.commit()
     await state.clear()
+
+    # Faza 4.1: faqat YANGI ro'yxatdan o'tishda xabar — rol almashtirishda (reregister) emas.
+    if not is_reregister:
+        await _notify_admins_safe(bot, user)
 
     await message.answer(
         f"✅ Ro'yxatdan o'tdingiz!\n\n"
