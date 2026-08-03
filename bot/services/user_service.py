@@ -14,6 +14,7 @@ from db.models import (
     SubscriptionStatus,
     User,
     UserRole,
+    VehicleType,
 )
 
 
@@ -58,6 +59,8 @@ async def create_user(
     full_name: str,
     phone: Optional[str],
     notify_enabled: bool = False,
+    vehicle_type: Optional[VehicleType] = None,
+    capacity_t: Optional[float] = None,
 ) -> User:
     user = User(
         telegram_id=telegram_id,
@@ -65,6 +68,8 @@ async def create_user(
         full_name=full_name,
         phone=phone,
         notify_enabled=notify_enabled,
+        vehicle_type=vehicle_type,
+        capacity_t=capacity_t,
     )
     session.add(user)
     await session.flush()
@@ -78,16 +83,23 @@ async def update_user_role(
     full_name: str,
     phone: Optional[str],
     notify_enabled: bool = False,
+    vehicle_type: Optional[VehicleType] = None,
+    capacity_t: Optional[float] = None,
 ) -> User:
     """Mavjud foydalanuvchining rolini almashtiradi (adashib boshqa rol tanlaganda).
 
-    Bitim/reyting tarixi (user.id o'zgarmaydi) saqlanib qoladi.
+    Bitim/reyting tarixi (user.id o'zgarmaydi) saqlanib qoladi. `vehicle_type`/
+    `capacity_t` berilmasa (None) — mavjud qiymat saqlanadi (phone kabi).
     """
     user.role = role
     user.full_name = full_name
     if phone:
         user.phone = phone
     user.notify_enabled = notify_enabled
+    if vehicle_type is not None:
+        user.vehicle_type = vehicle_type
+    if capacity_t is not None:
+        user.capacity_t = capacity_t
     await session.flush()
     return user
 

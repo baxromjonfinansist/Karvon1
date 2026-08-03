@@ -110,6 +110,10 @@ class User(Base):
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), nullable=False)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     phone: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # Faza 3.3: DriverReg oqimida yig'iladigan mashina ma'lumoti (avval yo'qolib
+    # ketardi) — haydovchi bo'lmagan userlar uchun NULL.
+    vehicle_type: Mapped[Optional[VehicleType]] = mapped_column(Enum(VehicleType), nullable=True)
+    capacity_t: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 2), nullable=True)
     rating: Mapped[Decimal] = mapped_column(Numeric(3, 2), server_default="5.00")
     verified: Mapped[bool] = mapped_column(Boolean, server_default="false")
     sub_status: Mapped[SubscriptionStatus] = mapped_column(

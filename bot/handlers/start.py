@@ -34,10 +34,12 @@ from db.models import UserRole, VehicleType
 
 router = Router(name="start")
 
+# Faza 3.1: rollar 2 taga qisqartirildi — "🏭 Asset egasi" endi yangi
+# ro'yxatga olishda taklif qilinmaydi (UserRole.asset_owner qiymati saqlanadi,
+# faqat bu yerda ishlatilmaydi; mavjud userlar /migrate_roles orqali ko'chadi).
 ROLE_MAP = {
     "🚛 Haydovchi": UserRole.driver,
     "📦 Yuk beruvchi": UserRole.cargo_provider,
-    "🏭 Asset egasi": UserRole.asset_owner,
 }
 
 VEHICLE_TYPE_MAP = {
@@ -373,6 +375,11 @@ async def driver_notify_choice(callback: CallbackQuery, state: FSMContext, sessi
     notify = callback.data == "notify_yes"
     data = await state.get_data()
 
+    # Faza 3.3: mashina turi/tonnaj DriverReg oqimida yig'ilgan (waiting_vehicle_type,
+    # waiting_capacity) — endi bazaga uzatiladi (avval tashlab yuborilardi).
+    vehicle_type = VEHICLE_TYPE_MAP.get(data.get("vehicle_type"))
+    capacity_t = data.get("capacity_t")
+
     if data.get("reregister"):
         user = await get_or_none(session, callback.from_user.id)
         user = await update_user_role(
@@ -381,6 +388,8 @@ async def driver_notify_choice(callback: CallbackQuery, state: FSMContext, sessi
             full_name=data["full_name"],
             phone=data.get("phone"),
             notify_enabled=notify,
+            vehicle_type=vehicle_type,
+            capacity_t=capacity_t,
         )
     else:
         user = await create_user(
@@ -390,6 +399,8 @@ async def driver_notify_choice(callback: CallbackQuery, state: FSMContext, sessi
             full_name=data["full_name"],
             phone=data.get("phone"),
             notify_enabled=notify,
+            vehicle_type=vehicle_type,
+            capacity_t=capacity_t,
         )
 
     user.pref_origin = data.get("pref_origin")

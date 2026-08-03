@@ -37,10 +37,13 @@ def back_reply_kb(*extra_rows: list[KeyboardButton]) -> ReplyKeyboardMarkup:
 
 
 def role_choice_kb(with_back: bool = False) -> ReplyKeyboardMarkup:
-    """Rol tanlash. `with_back` — sozlamalardan kelganda profilga qaytish uchun."""
+    """Rol tanlash. `with_back` — sozlamalardan kelganda profilga qaytish uchun.
+
+    Faza 3.1: rollar 2 taga qisqartirildi (asset_owner/staff_driver yangi
+    ro'yxatga olishda taklif qilinmaydi — enum qiymatlari saqlanadi).
+    """
     keyboard = [
         [KeyboardButton(text="🚛 Haydovchi"), KeyboardButton(text="📦 Yuk beruvchi")],
-        [KeyboardButton(text="🏭 Asset egasi")],
     ]
     if with_back:
         keyboard.append([KeyboardButton(text=BACK_TEXT)])

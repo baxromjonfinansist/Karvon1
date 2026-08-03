@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 
 from aiogram import Bot, F, Router
-from aiogram.exceptions import TelegramAPIError
+from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError
 from aiogram.filters import Command
 from aiogram.types import (
     CallbackQuery,
@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from bot.config import settings
+from bot.keyboards import main_menu_driver_kb, main_menu_provider_kb
 from bot.services.load_service import get_driver_telegram_ids_for_route
 from bot.services.logist_service import (
     add_logist_phone,
@@ -30,10 +31,11 @@ from bot.services.user_service import (
     get_activity_dashboard,
     get_or_none,
     grant_subscription,
+    update_user_role,
 )
 from db.models import (
     Deal, DealStatus, Load, LoadStatus,
-    Subscription, SubscriptionPlan, SubscriptionStatus, User,
+    Subscription, SubscriptionPlan, SubscriptionStatus, User, UserRole,
 )
 
 router = Router(name="admin")
@@ -293,6 +295,93 @@ async def grant_sub(message: Message, session: AsyncSession, bot: Bot) -> None:
         )
     except TelegramAPIError:
         pass
+
+
+# ---------------------------------------------------------------------------
+# /migrate_roles — Faza 3.2: asset_owner/staff_driver rolidagi mavjud
+# userlarga bir martalik rol tanlash so'rovi (yangi ro'yxatga olishda bu
+# rollar endi taklif qilinmaydi — role_choice_kb faqat 2 tugma).
+# ---------------------------------------------------------------------------
+
+def _role_migrate_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🚛 Haydovchi", callback_data="roleswitch|driver"),
+        InlineKeyboardButton(text="📦 Yuk beruvchi", callback_data="roleswitch|cargo_provider"),
+    ]])
+
+
+@router.message(Command("migrate_roles"))
+async def migrate_roles(message: Message, session: AsyncSession, bot: Bot) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+
+    result = await session.execute(
+        select(User).where(User.role.in_([UserRole.asset_owner, UserRole.staff_driver]))
+    )
+    targets = list(result.scalars().all())
+
+    if not targets:
+        await message.answer("♻️ Ko'chiriladigan foydalanuvchi yo'q (asset_owner/staff_driver bo'sh).")
+        return
+
+    sent = 0
+    blocked = 0
+    for user in targets:
+        try:
+            await bot.send_message(
+                user.telegram_id,
+                "Botda rollar soddalashtirildi. Iltimos, o'zingizga mos rolni tanlang:",
+                reply_markup=_role_migrate_kb(),
+            )
+            sent += 1
+        except TelegramForbiddenError:
+            blocked += 1
+        except TelegramAPIError:
+            blocked += 1
+
+    await message.answer(
+        f"♻️ <b>Rol migratsiyasi yuborildi</b>\n\n"
+        f"Jami nomzod: {len(targets)} ta\n"
+        f"✅ Xabar yuborildi: {sent}\n"
+        f"🚫 Bloklagan/xato: {blocked}"
+    )
+
+
+@router.callback_query(F.data.startswith("roleswitch|"))
+async def role_switch_chosen(callback: CallbackQuery, session: AsyncSession) -> None:
+    """/migrate_roles xabaridagi tugma — foydalanuvchi o'zi yangi rolni tanlaydi."""
+    role_key = callback.data.split("|", 1)[1]
+    try:
+        new_role = UserRole(role_key)
+    except ValueError:
+        await callback.answer()
+        return
+
+    user = await get_or_none(session, callback.from_user.id)
+    if not user:
+        await callback.answer("Foydalanuvchi topilmadi.", show_alert=True)
+        return
+
+    user = await update_user_role(
+        session, user,
+        role=new_role,
+        full_name=user.full_name,
+        phone=user.phone,
+        notify_enabled=user.notify_enabled,
+    )
+    await session.commit()
+
+    await callback.message.edit_reply_markup(reply_markup=None)
+    role_label = "🚛 Haydovchi" if new_role == UserRole.driver else "📦 Yuk beruvchi"
+    menu_kb = (
+        main_menu_provider_kb() if new_role == UserRole.cargo_provider
+        else main_menu_driver_kb()
+    )
+    await callback.message.answer(
+        f"✅ Rolingiz yangilandi: {role_label}\n\nAsosiy menyu:",
+        reply_markup=menu_kb,
+    )
+    await callback.answer()
 
 
 # ---------------------------------------------------------------------------
