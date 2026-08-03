@@ -16,6 +16,13 @@ from aiogram.types import (
 )
 
 
+from bot.keyboards import (
+    BACK_TEXT,
+    back_reply_kb,
+    back_row,
+    main_menu_driver_kb,
+    main_menu_provider_kb,
+)
 from bot.services.load_service import (
     delete_stale_loads,
     format_load_card,
@@ -68,15 +75,17 @@ def _take_kb(load_id: int) -> InlineKeyboardMarkup:
 
 
 def _take_confirm_kb(load_id: int) -> InlineKeyboardMarkup:
+    # «⬅️ Orqaga» = takeno_ (yuk kartasiga qaytish) — bir qadam orqaga.
     return InlineKeyboardMarkup(
-        inline_keyboard=[[
-            InlineKeyboardButton(text="✅ Ha, olaman", callback_data=f"takeyes_{load_id}"),
-            InlineKeyboardButton(text="❌ Yo'q", callback_data=f"takeno_{load_id}"),
-        ]]
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Ha, olaman", callback_data=f"takeyes_{load_id}")],
+            back_row(f"takeno_{load_id}"),
+        ]
     )
 
 
 def _regions_menu_kb(regions_with_counts) -> InlineKeyboardMarkup:
+    # Bu oqimning birinchi bosqichi — orqaga tugmasi yo'q («🏠 Asosiy bo'lim» bor).
     buttons = [
         [InlineKeyboardButton(
             text=f"{origin} ({count})",
@@ -89,6 +98,10 @@ def _regions_menu_kb(regions_with_counts) -> InlineKeyboardMarkup:
 
 _VEHICLE_LABELS = {"fura": "🚛 Fura", "isuzu": "🚚 Isuzu", "kichik": "🚐 Kichik (Porter/Labo)"}
 
+_REGIONS_PROMPT = (
+    "📤 <b>Qayerdan?</b> Chiqish viloyatini tanlang:\n(qavs ichida — yuklar soni)"
+)
+
 
 def _vehicle_menu_kb(origin: str, vehicle_counts) -> InlineKeyboardMarkup:
     buttons = [
@@ -98,10 +111,13 @@ def _vehicle_menu_kb(origin: str, vehicle_counts) -> InlineKeyboardMarkup:
         )]
         for veh, count in vehicle_counts
     ]
+    buttons.append(back_row("bk|reg"))
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def _dest_menu_kb(origin: str, vehicle: str, dests_with_counts) -> InlineKeyboardMarkup:
+def _dest_menu_kb(
+    origin: str, vehicle: str, dests_with_counts, back_data: str
+) -> InlineKeyboardMarkup:
     buttons = [
         [InlineKeyboardButton(
             text=f"{region} ({count})",
@@ -109,12 +125,15 @@ def _dest_menu_kb(origin: str, vehicle: str, dests_with_counts) -> InlineKeyboar
         )]
         for region, count in dests_with_counts
     ]
+    buttons.append(back_row(back_data))
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def _pager_kb(
     origin: str, vehicle: str, region: str, offset: int, has_more: bool
-) -> InlineKeyboardMarkup | None:
+) -> InlineKeyboardMarkup:
+    """Sahifalash + «⬅️ Orqaga» (manzil menyusiga). Doim qaytariladi — orqaga
+    tugmasi ro'yxat bosqichida ham bo'lishi shart."""
     row = []
     if offset > 0:
         row.append(InlineKeyboardButton(
@@ -124,11 +143,17 @@ def _pager_kb(
         row.append(InlineKeyboardButton(
             text="Keyingi ▶️", callback_data=f"more|{origin}|{vehicle}|{region}|{offset + 10}"
         ))
-    return InlineKeyboardMarkup(inline_keyboard=[row]) if row else None
+    rows = [row] if row else []
+    rows.append(back_row(f"bk|dst|{origin}|{vehicle}"))
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _check_driver(user) -> bool:
     return bool(user and user.role in _DRIVER_ROLES)
+
+
+def _main_menu_for(role):
+    return main_menu_provider_kb() if role == UserRole.cargo_provider else main_menu_driver_kb()
 
 
 async def _edit_or_answer(
@@ -174,16 +199,22 @@ async def _send_selection(
     for load in loads:
         await callback.message.answer(_fmt_load(load), reply_markup=_take_kb(load.id))
 
-    pager = _pager_kb(origin, vehicle, region, offset, has_more)
-    if pager:
-        tail = "Yana yuklar bor 👇" if has_more else "Boshqa yuk yo'q."
-        await callback.message.answer(tail, reply_markup=pager)
+    # Quyruq xabari DOIM yuboriladi — unda «⬅️ Orqaga» (manzil menyusiga) bor.
+    tail = "Yana yuklar bor 👇" if has_more else "Boshqa yuk yo'q."
+    await callback.message.answer(
+        tail, reply_markup=_pager_kb(origin, vehicle, region, offset, has_more)
+    )
 
 
 async def _show_dest_menu(
-    callback: CallbackQuery, session: AsyncSession, origin: str, vehicle: str
+    callback: CallbackQuery, session: AsyncSession, origin: str, vehicle: str,
+    back_data: str,
 ) -> None:
-    """Mashina turi tanlangandan keyin — borish viloyati menyusi."""
+    """Mashina turi tanlangandan keyin — borish viloyati menyusi.
+
+    `back_data` — orqaga qaysi bosqichga qaytishi: odatda mashina turi menyusi,
+    lekin viloyatda bitta tur bo'lsa (menyu o'tkazib yuborilgan) — viloyatlarga.
+    """
     dests = await get_destination_regions(session, origin, vehicle=vehicle)
     if not dests:
         await callback.answer("Bu turda yuk qolmadi.", show_alert=True)
@@ -194,7 +225,23 @@ async def _show_dest_menu(
     await _edit_or_answer(
         callback,
         f"📥 <b>{origin}</b> {label} — qayerga? Borish viloyatini tanlang:",
-        _dest_menu_kb(origin, vehicle, dests),
+        _dest_menu_kb(origin, vehicle, dests, back_data),
+    )
+
+
+async def _show_vehicle_menu(
+    callback: CallbackQuery, session: AsyncSession, origin: str
+) -> None:
+    """Mashina turi menyusi (orqaga — viloyatlar ro'yxatiga)."""
+    vehicle_counts = await get_vehicle_counts_by_origin(session, origin)
+    if not vehicle_counts:
+        await callback.answer("Bu viloyatda yuk qolmadi.", show_alert=True)
+        return
+    await callback.answer()
+    await _edit_or_answer(
+        callback,
+        f"🚚 <b>{origin}</b> — mashina turini tanlang:",
+        _vehicle_menu_kb(origin, vehicle_counts),
     )
 
 
@@ -221,10 +268,7 @@ async def show_feed(message: Message, session: AsyncSession) -> None:
         await message.answer("Hozircha yuklar yo'q 🤷\n\nKeyinroq tekshiring.")
         return
 
-    await message.answer(
-        "📤 <b>Qayerdan?</b> Chiqish viloyatini tanlang:\n(qavs ichida — yuklar soni)",
-        reply_markup=_regions_menu_kb(regions),
-    )
+    await message.answer(_REGIONS_PROMPT, reply_markup=_regions_menu_kb(regions))
 
 
 @router.callback_query(F.data.startswith("region_"))
@@ -244,8 +288,11 @@ async def show_vehicle_menu(callback: CallbackQuery, session: AsyncSession) -> N
         return
 
     # Bitta mashina turi bo'lsa — menyusiz to'g'ridan-to'g'ri borish viloyati.
+    # Bu bosqich o'tkazib yuborilgani uchun orqaga viloyatlar ro'yxatiga qaytadi.
     if len(vehicle_counts) == 1:
-        await _show_dest_menu(callback, session, origin, vehicle_counts[0][0])
+        await _show_dest_menu(
+            callback, session, origin, vehicle_counts[0][0], back_data="bk|reg"
+        )
         return
 
     await callback.answer()
@@ -267,7 +314,9 @@ async def show_destinations(callback: CallbackQuery, session: AsyncSession) -> N
         return
 
     await delete_stale_loads(session)
-    await _show_dest_menu(callback, session, origin, vehicle)
+    await _show_dest_menu(
+        callback, session, origin, vehicle, back_data=f"bk|veh|{origin}"
+    )
 
 
 @router.callback_query(F.data.startswith("dst|"))
@@ -293,6 +342,56 @@ async def show_more_loads(callback: CallbackQuery, session: AsyncSession) -> Non
         return
 
     await _send_selection(callback, session, origin, vehicle, region, offset=int(offset))
+
+
+# ---------------------------------------------------------------------------
+# ⬅️ Orqaga — yuk qidirish oqimi (bitta qadam orqaga, asosiy menyuga emas).
+# Holat callback_data ichida saqlanadi, shuning uchun FSM state kerak emas.
+# ---------------------------------------------------------------------------
+
+@router.callback_query(F.data == "bk|reg")
+async def back_to_regions(callback: CallbackQuery, session: AsyncSession) -> None:
+    """Mashina turi menyusidan → chiqish viloyatlari ro'yxatiga."""
+    user = await get_or_none(session, callback.from_user.id)
+    if not _check_driver(user):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+
+    regions = await get_origin_regions_with_open_loads(session)
+    if not regions:
+        await callback.answer("Hozircha yuklar yo'q.", show_alert=True)
+        return
+
+    await callback.answer()
+    await _edit_or_answer(callback, _REGIONS_PROMPT, _regions_menu_kb(regions))
+
+
+@router.callback_query(F.data.startswith("bk|veh|"))
+async def back_to_vehicles(callback: CallbackQuery, session: AsyncSession) -> None:
+    """Borish viloyati menyusidan → mashina turi menyusiga."""
+    origin = callback.data.split("|", 2)[2]
+
+    user = await get_or_none(session, callback.from_user.id)
+    if not _check_driver(user):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+
+    await _show_vehicle_menu(callback, session, origin)
+
+
+@router.callback_query(F.data.startswith("bk|dst|"))
+async def back_to_dests(callback: CallbackQuery, session: AsyncSession) -> None:
+    """Yuklar ro'yxatidan → borish viloyati menyusiga."""
+    _, _, origin, vehicle = callback.data.split("|", 3)
+
+    user = await get_or_none(session, callback.from_user.id)
+    if not _check_driver(user):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+
+    await _show_dest_menu(
+        callback, session, origin, vehicle, back_data=f"bk|veh|{origin}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -429,14 +528,7 @@ async def show_deals(message: Message, session: AsyncSession) -> None:
         date = deal.created_at.strftime("%d.%m.%Y") if deal.created_at else "—"
         status = _DEAL_STATUS.get(deal.status.value, deal.status.value)
 
-        kb = None
-        if deal.id in pending_ids:
-            kb = InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(
-                    text="⭐ Reyting berish",
-                    callback_data=f"rate_deal_{deal.id}",
-                )
-            ]])
+        kb = _rate_deal_kb(deal.id) if deal.id in pending_ids else None
 
         await message.answer(
             f"🤝 <b>Bitim #{deal.id}</b>\n"
@@ -454,11 +546,21 @@ async def show_deals(message: Message, session: AsyncSession) -> None:
 
 def _score_kb(deal_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
-        inline_keyboard=[[
-            InlineKeyboardButton(text=f"⭐{i}", callback_data=f"score_{deal_id}_{i}")
-            for i in range(1, 6)
-        ]]
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=f"⭐{i}", callback_data=f"score_{deal_id}_{i}")
+                for i in range(1, 6)
+            ],
+            back_row(f"bk|rate|{deal_id}"),
+        ]
     )
+
+
+def _rate_deal_kb(deal_id: int) -> InlineKeyboardMarkup:
+    """Bitim kartasidagi «⭐ Reyting berish» tugmasi (reyting oqimidan oldingi bosqich)."""
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="⭐ Reyting berish", callback_data=f"rate_deal_{deal_id}")
+    ]])
 
 
 @router.callback_query(F.data.startswith("rate_deal_"))
@@ -479,11 +581,35 @@ async def rate_deal_cb(
         await callback.message.edit_reply_markup(reply_markup=None)
         return
 
+    await state.update_data(deal_id=deal_id)
     await state.set_state(RatingFlow.waiting_score)
     await callback.message.answer(
         "⭐ <b>Reyting bering</b> (1 dan 5 gacha):", reply_markup=_score_kb(deal_id)
     )
     await callback.answer()
+
+
+@router.callback_query(RatingFlow.waiting_score, F.data.startswith("bk|rate|"))
+async def rating_score_back(callback: CallbackQuery, state: FSMContext) -> None:
+    """Ball tanlashdan → bitim kartasiga («⭐ Reyting berish» tugmasi qaytadi)."""
+    deal_id = int(callback.data.split("|")[2])
+    await state.clear()
+    await callback.message.edit_text(
+        "⭐ Reyting keyinroq — «⭐ Reyting berish» tugmasi orqali qoldirasiz.",
+        reply_markup=_rate_deal_kb(deal_id),
+    )
+    await callback.answer()
+
+
+@router.message(RatingFlow.waiting_comment, F.text == BACK_TEXT)
+async def rating_comment_back(message: Message, state: FSMContext) -> None:
+    """Izohdan → ball tanlashga qaytish."""
+    data = await state.get_data()
+    await state.set_state(RatingFlow.waiting_score)
+    await message.answer(
+        "⭐ <b>Reyting bering</b> (1 dan 5 gacha):",
+        reply_markup=_score_kb(data["deal_id"]),
+    )
 
 
 @router.callback_query(RatingFlow.waiting_score, F.data.startswith("score_"))
@@ -522,7 +648,8 @@ async def score_cb(
     await callback.message.edit_text(f"Siz {stars} ({score}/5) berdingiz.")
     await callback.message.answer(
         "💬 Izoh qoldiring (ixtiyoriy).\n\n"
-        "/skip — izohsiz o'tkazib yuborish."
+        "/skip — izohsiz o'tkazib yuborish.",
+        reply_markup=back_reply_kb(),
     )
     await callback.answer()
 
@@ -564,7 +691,9 @@ async def rating_comment(
     ).scalar_one_or_none()
     rating_str = f"{to_user.rating:.1f}" if to_user and to_user.rating else "—"
 
+    # Izoh bosqichida «⬅️ Orqaga» klaviaturasi ko'rsatilgan edi — asosiy menyu tiklanadi.
     await message.answer(
         f"✅ <b>Rahmat! Reytingiz qabul qilindi.</b>\n\n"
-        f"Baholangan foydalanuvchi reytingi: ⭐ {rating_str}"
+        f"Baholangan foydalanuvchi reytingi: ⭐ {rating_str}",
+        reply_markup=_main_menu_for(user.role),
     )

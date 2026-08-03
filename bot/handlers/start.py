@@ -13,12 +13,13 @@ from aiogram.types import (
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.keyboards import (
-    confirm_kb,
+    BACK_TEXT,
+    back_reply_kb,
+    back_row,
     main_menu_driver_kb,
     main_menu_provider_kb,
     phone_request_kb,
     pref_viloyat_kb,
-    remove_kb,
     role_choice_kb,
     vehicle_type_kb,
 )
@@ -28,7 +29,7 @@ from bot.services.user_service import (
     get_or_none,
     update_user_role,
 )
-from bot.states import DriverReg, ProviderReg
+from bot.states import DriverReg, ProviderReg, RoleChange
 from db.models import UserRole, VehicleType
 
 router = Router(name="start")
@@ -75,6 +76,78 @@ async def _send_main_menu(message: Message, role: UserRole) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Ro'yxatdan o'tish savollari — bitta joyda, chunki «⬅️ Orqaga» bosilganda
+# aynan o'sha savol qayta so'raladi (takroriy kod bo'lmasin).
+# ---------------------------------------------------------------------------
+
+async def _ask_role(message: Message, state: FSMContext) -> None:
+    """Rol tanlashga qaytish. Sozlamalardan kelingan bo'lsa «reregister» saqlanadi."""
+    data = await state.get_data()
+    reregister = bool(data.get("reregister"))
+    await state.clear()
+    if reregister:
+        await state.update_data(reregister=True)
+        await state.set_state(RoleChange.waiting_role)
+    await message.answer(
+        "Ro'lni tanlang:", reply_markup=role_choice_kb(with_back=reregister)
+    )
+
+
+async def _ask_name(message: Message) -> None:
+    await message.answer(
+        "Ismingiz va familiyangizni kiriting\n(masalan: Alisher Qodirov):",
+        reply_markup=back_reply_kb(),
+    )
+
+
+async def _ask_phone(message: Message) -> None:
+    await message.answer(
+        "Telefon raqamingizni yuboring:", reply_markup=phone_request_kb()
+    )
+
+
+async def _ask_vehicle_type(message: Message) -> None:
+    await message.answer("Mashina turini tanlang:", reply_markup=vehicle_type_kb())
+
+
+async def _ask_capacity(message: Message) -> None:
+    await message.answer(
+        "Mashina yuk ko'tarish quvvatini kiriting (tonnada, masalan: 5 yoki 1.5):",
+        reply_markup=back_reply_kb(),
+    )
+
+
+async def _ask_pref_origin(message: Message, session: AsyncSession) -> None:
+    viloyats = await get_ranked_viloyats(session)
+    await message.answer(
+        "📍 <b>Eng aktual yo'nalishingiz</b>\n\n"
+        "Qaysi viloyatdan yuk olasiz? (eng ko'p yuk chiqadigan joylar yuqorida):",
+        reply_markup=pref_viloyat_kb(viloyats, "prego", back_data="bk|dreg|capacity"),
+    )
+
+
+async def _ask_pref_destination(
+    message: Message, session: AsyncSession, origin: str
+) -> None:
+    viloyats = await get_ranked_viloyats(session, origin_filter=origin)
+    await message.answer(
+        f"📍 <b>{origin}</b>dan qayerga olib borasiz?\n"
+        "(Ikkala yo'nalish bo'yicha ham xabarnoma keladi — masalan "
+        f"{origin}→X va X→{origin}):",
+        reply_markup=pref_viloyat_kb(viloyats, "predst", back_data="bk|dreg|origin"),
+    )
+
+
+async def _ask_notify(message: Message) -> None:
+    await message.answer(
+        "🔔 <b>Xabarnoma</b>\n\n"
+        "Shu yo'nalishga yangi yuk kelsa, sizga avtomatik xabar yuboraylikmi? "
+        "(Keyin ⚙️ Sozlamalarda o'zgartirishingiz mumkin)",
+        reply_markup=_notify_ask_kb(),
+    )
+
+
+# ---------------------------------------------------------------------------
 # /start
 # ---------------------------------------------------------------------------
 
@@ -100,7 +173,7 @@ async def cmd_start(message: Message, session: AsyncSession, state: FSMContext) 
 # Rol tanlash
 # ---------------------------------------------------------------------------
 
-@router.message(F.text.in_(ROLE_MAP.keys()), StateFilter(None))
+@router.message(F.text.in_(ROLE_MAP.keys()), StateFilter(None, RoleChange.waiting_role))
 async def role_chosen(message: Message, state: FSMContext) -> None:
     role = ROLE_MAP[message.text]
     await state.update_data(role=role.value)
@@ -110,15 +183,18 @@ async def role_chosen(message: Message, state: FSMContext) -> None:
     else:
         await state.set_state(DriverReg.waiting_name)
 
-    await message.answer(
-        "Ismingiz va familiyangizni kiriting\n(masalan: Alisher Qodirov):",
-        reply_markup=remove_kb(),
-    )
+    await _ask_name(message)
 
 
 # ---------------------------------------------------------------------------
 # DriverReg oqimi
 # ---------------------------------------------------------------------------
+
+@router.message(DriverReg.waiting_name, F.text == BACK_TEXT)
+async def driver_name_back(message: Message, state: FSMContext) -> None:
+    """Ism → rol tanlash (oqimning eng birinchi qadami)."""
+    await _ask_role(message, state)
+
 
 @router.message(DriverReg.waiting_name)
 async def driver_name(message: Message, state: FSMContext) -> None:
@@ -128,10 +204,14 @@ async def driver_name(message: Message, state: FSMContext) -> None:
 
     await state.update_data(full_name=message.text.strip())
     await state.set_state(DriverReg.waiting_phone)
-    await message.answer(
-        "Telefon raqamingizni yuboring:",
-        reply_markup=phone_request_kb(),
-    )
+    await _ask_phone(message)
+
+
+@router.message(DriverReg.waiting_phone, F.text == BACK_TEXT)
+async def driver_phone_back(message: Message, state: FSMContext) -> None:
+    """Telefon → ism."""
+    await state.set_state(DriverReg.waiting_name)
+    await _ask_name(message)
 
 
 @router.message(DriverReg.waiting_phone, F.contact)
@@ -139,10 +219,7 @@ async def driver_phone_contact(message: Message, state: FSMContext) -> None:
     phone = message.contact.phone_number
     await state.update_data(phone=phone)
     await state.set_state(DriverReg.waiting_vehicle_type)
-    await message.answer(
-        "Mashina turini tanlang:",
-        reply_markup=vehicle_type_kb(),
-    )
+    await _ask_vehicle_type(message)
 
 
 @router.message(DriverReg.waiting_phone, F.text)
@@ -157,34 +234,33 @@ async def driver_phone_text(message: Message, state: FSMContext) -> None:
 
     await state.update_data(phone=phone)
     await state.set_state(DriverReg.waiting_vehicle_type)
-    await message.answer(
-        "Mashina turini tanlang:",
-        reply_markup=vehicle_type_kb(),
-    )
+    await _ask_vehicle_type(message)
 
 
-@router.message(DriverReg.waiting_vehicle_type, F.text == "⬅️ Orqaga")
+@router.message(DriverReg.waiting_vehicle_type, F.text == BACK_TEXT)
 async def driver_vehicle_back(message: Message, state: FSMContext) -> None:
+    """Mashina turi → telefon."""
     await state.set_state(DriverReg.waiting_phone)
-    await message.answer(
-        "Telefon raqamingizni yuboring:",
-        reply_markup=phone_request_kb(),
-    )
+    await _ask_phone(message)
 
 
 @router.message(DriverReg.waiting_vehicle_type, F.text.in_(VEHICLE_TYPE_MAP.keys()))
 async def driver_vehicle_type(message: Message, state: FSMContext) -> None:
     await state.update_data(vehicle_type=message.text)
     await state.set_state(DriverReg.waiting_capacity)
-    await message.answer(
-        "Mashina yuk ko'tarish quvvatini kiriting (tonnada, masalan: 5 yoki 1.5):",
-        reply_markup=remove_kb(),
-    )
+    await _ask_capacity(message)
 
 
 @router.message(DriverReg.waiting_vehicle_type)
 async def driver_vehicle_type_invalid(message: Message) -> None:
     await message.answer("Iltimos, tugmalardan birini tanlang.")
+
+
+@router.message(DriverReg.waiting_capacity, F.text == BACK_TEXT)
+async def driver_capacity_back(message: Message, state: FSMContext) -> None:
+    """Tonnaj → mashina turi."""
+    await state.set_state(DriverReg.waiting_vehicle_type)
+    await _ask_vehicle_type(message)
 
 
 @router.message(DriverReg.waiting_capacity)
@@ -199,13 +275,42 @@ async def driver_capacity(message: Message, state: FSMContext, session: AsyncSes
 
     await state.update_data(capacity_t=capacity)
     await state.set_state(DriverReg.waiting_pref_origin)
+    await _ask_pref_origin(message, session)
 
-    viloyats = await get_ranked_viloyats(session)
-    await message.answer(
-        "📍 <b>Eng aktual yo'nalishingiz</b>\n\n"
-        "Qaysi viloyatdan yuk olasiz? (eng ko'p yuk chiqadigan joylar yuqorida):",
-        reply_markup=pref_viloyat_kb(viloyats, "prego"),
-    )
+
+@router.callback_query(DriverReg.waiting_pref_origin, F.data == "bk|dreg|capacity")
+async def driver_pref_origin_back(callback: CallbackQuery, state: FSMContext) -> None:
+    """Chiqish viloyati → tonnaj."""
+    await state.set_state(DriverReg.waiting_capacity)
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await _ask_capacity(callback.message)
+    await callback.answer()
+
+
+# Inline bosqichlarda ekranda oldingi qadamning reply «⬅️ Orqaga» tugmasi ham
+# qolib ketadi — u bosilsa ham xuddi shu bir qadam orqaga ishlashi kerak.
+
+@router.message(DriverReg.waiting_pref_origin, F.text == BACK_TEXT)
+async def driver_pref_origin_back_text(message: Message, state: FSMContext) -> None:
+    await state.set_state(DriverReg.waiting_capacity)
+    await _ask_capacity(message)
+
+
+@router.message(DriverReg.waiting_pref_destination, F.text == BACK_TEXT)
+async def driver_pref_dest_back_text(
+    message: Message, state: FSMContext, session: AsyncSession
+) -> None:
+    await state.set_state(DriverReg.waiting_pref_origin)
+    await _ask_pref_origin(message, session)
+
+
+@router.message(DriverReg.waiting_notify, F.text == BACK_TEXT)
+async def driver_notify_back_text(
+    message: Message, state: FSMContext, session: AsyncSession
+) -> None:
+    data = await state.get_data()
+    await state.set_state(DriverReg.waiting_pref_destination)
+    await _ask_pref_destination(message, session, data.get("pref_origin") or "")
 
 
 @router.callback_query(DriverReg.waiting_pref_origin, F.data.startswith("prego_"))
@@ -214,22 +319,30 @@ async def driver_pref_origin(callback: CallbackQuery, state: FSMContext, session
     await state.update_data(pref_origin=origin)
     await state.set_state(DriverReg.waiting_pref_destination)
 
-    viloyats = await get_ranked_viloyats(session, origin_filter=origin)
     await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.message.answer(
-        f"📍 <b>{origin}</b>dan qayerga olib borasiz?\n"
-        "(Ikkala yo'nalish bo'yicha ham xabarnoma keladi — masalan "
-        f"{origin}→X va X→{origin}):",
-        reply_markup=pref_viloyat_kb(viloyats, "predst"),
-    )
+    await _ask_pref_destination(callback.message, session, origin)
     await callback.answer()
 
 
 def _notify_ask_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🔔 Ha, xabar bering", callback_data="notify_yes"),
-        InlineKeyboardButton(text="🔕 Yo'q", callback_data="notify_no"),
-    ]])
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔔 Ha, xabar bering", callback_data="notify_yes"),
+            InlineKeyboardButton(text="🔕 Yo'q", callback_data="notify_no"),
+        ],
+        back_row("bk|dreg|dest"),
+    ])
+
+
+@router.callback_query(DriverReg.waiting_pref_destination, F.data == "bk|dreg|origin")
+async def driver_pref_dest_back(
+    callback: CallbackQuery, state: FSMContext, session: AsyncSession
+) -> None:
+    """Borish viloyati → chiqish viloyati."""
+    await state.set_state(DriverReg.waiting_pref_origin)
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await _ask_pref_origin(callback.message, session)
+    await callback.answer()
 
 
 @router.callback_query(DriverReg.waiting_pref_destination, F.data.startswith("predst_"))
@@ -239,12 +352,19 @@ async def driver_pref_destination(callback: CallbackQuery, state: FSMContext) ->
     await state.set_state(DriverReg.waiting_notify)
 
     await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.message.answer(
-        "🔔 <b>Xabarnoma</b>\n\n"
-        "Shu yo'nalishga yangi yuk kelsa, sizga avtomatik xabar yuboraylikmi? "
-        "(Keyin ⚙️ Sozlamalarda o'zgartirishingiz mumkin)",
-        reply_markup=_notify_ask_kb(),
-    )
+    await _ask_notify(callback.message)
+    await callback.answer()
+
+
+@router.callback_query(DriverReg.waiting_notify, F.data == "bk|dreg|dest")
+async def driver_notify_back(
+    callback: CallbackQuery, state: FSMContext, session: AsyncSession
+) -> None:
+    """Xabarnoma → borish viloyati."""
+    data = await state.get_data()
+    await state.set_state(DriverReg.waiting_pref_destination)
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await _ask_pref_destination(callback.message, session, data.get("pref_origin") or "")
     await callback.answer()
 
 
@@ -300,6 +420,12 @@ async def driver_notify_choice(callback: CallbackQuery, state: FSMContext, sessi
 # ProviderReg oqimi
 # ---------------------------------------------------------------------------
 
+@router.message(ProviderReg.waiting_name, F.text == BACK_TEXT)
+async def provider_name_back(message: Message, state: FSMContext) -> None:
+    """Ism → rol tanlash (oqimning eng birinchi qadami)."""
+    await _ask_role(message, state)
+
+
 @router.message(ProviderReg.waiting_name)
 async def provider_name(message: Message, state: FSMContext) -> None:
     if not message.text or len(message.text.strip()) < 3:
@@ -308,10 +434,14 @@ async def provider_name(message: Message, state: FSMContext) -> None:
 
     await state.update_data(full_name=message.text.strip())
     await state.set_state(ProviderReg.waiting_phone)
-    await message.answer(
-        "Telefon raqamingizni yuboring:",
-        reply_markup=phone_request_kb(),
-    )
+    await _ask_phone(message)
+
+
+@router.message(ProviderReg.waiting_phone, F.text == BACK_TEXT)
+async def provider_phone_back(message: Message, state: FSMContext) -> None:
+    """Telefon → ism."""
+    await state.set_state(ProviderReg.waiting_name)
+    await _ask_name(message)
 
 
 @router.message(ProviderReg.waiting_phone, F.contact)

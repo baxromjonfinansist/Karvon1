@@ -12,7 +12,13 @@ from aiogram.types import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.keyboards import confirm_kb, main_menu_provider_kb, remove_kb
+from bot.keyboards import (
+    BACK_TEXT,
+    back_reply_kb,
+    back_row,
+    confirm_kb,
+    main_menu_provider_kb,
+)
 from bot.services.load_service import (
     cancel_load,
     create_load,
@@ -38,11 +44,47 @@ _CARGO_TYPES = ["Qurilish", "Oziq-ovqat", "Elektronika", "Kimyo", "Boshqa"]
 
 
 def _cargo_type_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=t, callback_data=f"cargo_{t}")]
-            for t in _CARGO_TYPES
-        ]
+    rows = [
+        [InlineKeyboardButton(text=t, callback_data=f"cargo_{t}")]
+        for t in _CARGO_TYPES
+    ]
+    rows.append(back_row("bk|load|dest"))
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+# ---------------------------------------------------------------------------
+# Yuk joylash savollari — «⬅️ Orqaga» bosilganda ayni savol qayta so'raladi
+# ---------------------------------------------------------------------------
+
+async def _ask_origin(message: Message) -> None:
+    await message.answer(
+        "📍 Jo'nab ketish shahrini kiriting:\n(masalan: Toshkent)",
+        reply_markup=back_reply_kb(),
+    )
+
+
+async def _ask_destination(message: Message) -> None:
+    await message.answer(
+        "📍 Yetib borish shahrini kiriting:\n(masalan: Samarqand)",
+        reply_markup=back_reply_kb(),
+    )
+
+
+async def _ask_cargo_type(message: Message) -> None:
+    await message.answer("📦 Yuk turini tanlang:", reply_markup=_cargo_type_kb())
+
+
+async def _ask_weight(message: Message) -> None:
+    await message.answer(
+        "⚖️ Yuk vaznini kiriting (tonnada, masalan: 5 yoki 1.5):",
+        reply_markup=back_reply_kb(),
+    )
+
+
+async def _ask_price(message: Message) -> None:
+    await message.answer(
+        "💰 Narxni kiriting (so'mda, masalan: 500000):",
+        reply_markup=back_reply_kb(),
     )
 
 
@@ -64,10 +106,14 @@ async def start_load_post(message: Message, state: FSMContext, session: AsyncSes
         return
 
     await state.set_state(LoadPost.waiting_origin)
-    await message.answer(
-        "📍 Jo'nab ketish shahrini kiriting:\n(masalan: Toshkent)",
-        reply_markup=remove_kb(),
-    )
+    await _ask_origin(message)
+
+
+@router.message(LoadPost.waiting_origin, F.text == BACK_TEXT)
+async def load_origin_back(message: Message, state: FSMContext) -> None:
+    """Oqimning birinchi qadami — orqaga = joylashni bekor qilib asosiy menyuga."""
+    await state.clear()
+    await message.answer("Bekor qilindi.", reply_markup=main_menu_provider_kb())
 
 
 @router.message(LoadPost.waiting_origin)
@@ -77,7 +123,14 @@ async def load_origin(message: Message, state: FSMContext) -> None:
         return
     await state.update_data(origin=message.text.strip())
     await state.set_state(LoadPost.waiting_destination)
-    await message.answer("📍 Yetib borish shahrini kiriting:\n(masalan: Samarqand)")
+    await _ask_destination(message)
+
+
+@router.message(LoadPost.waiting_destination, F.text == BACK_TEXT)
+async def load_destination_back(message: Message, state: FSMContext) -> None:
+    """Yetib borish shahri → jo'nab ketish shahri."""
+    await state.set_state(LoadPost.waiting_origin)
+    await _ask_origin(message)
 
 
 @router.message(LoadPost.waiting_destination)
@@ -93,7 +146,31 @@ async def load_destination(message: Message, state: FSMContext) -> None:
 
     await state.update_data(destination=message.text.strip())
     await state.set_state(LoadPost.waiting_cargo_type)
-    await message.answer("📦 Yuk turini tanlang:", reply_markup=_cargo_type_kb())
+    await _ask_cargo_type(message)
+
+
+@router.callback_query(LoadPost.waiting_cargo_type, F.data == "bk|load|dest")
+async def load_cargo_type_back(callback: CallbackQuery, state: FSMContext) -> None:
+    """Yuk turi → yetib borish shahri."""
+    await state.set_state(LoadPost.waiting_destination)
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await _ask_destination(callback.message)
+    await callback.answer()
+
+
+# Inline bosqichlarda oldingi qadamning reply «⬅️ Orqaga» tugmasi ekranda
+# qoladi — u bosilsa ham xuddi shu bir qadam orqaga ishlaydi.
+
+@router.message(LoadPost.waiting_cargo_type, F.text == BACK_TEXT)
+async def load_cargo_type_back_text(message: Message, state: FSMContext) -> None:
+    await state.set_state(LoadPost.waiting_destination)
+    await _ask_destination(message)
+
+
+@router.message(LoadPost.waiting_confirm, F.text == BACK_TEXT)
+async def load_confirm_back_text(message: Message, state: FSMContext) -> None:
+    await state.set_state(LoadPost.waiting_price)
+    await _ask_price(message)
 
 
 @router.message(LoadPost.waiting_cargo_type)
@@ -107,10 +184,15 @@ async def load_cargo_type(callback: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(cargo_type=cargo_type)
     await state.set_state(LoadPost.waiting_weight)
     await callback.message.edit_text(f"Yuk turi tanlandi: <b>{cargo_type}</b>")
-    await callback.message.answer(
-        "⚖️ Yuk vaznini kiriting (tonnada, masalan: 5 yoki 1.5):"
-    )
+    await _ask_weight(callback.message)
     await callback.answer()
+
+
+@router.message(LoadPost.waiting_weight, F.text == BACK_TEXT)
+async def load_weight_back(message: Message, state: FSMContext) -> None:
+    """Vazn → yuk turi."""
+    await state.set_state(LoadPost.waiting_cargo_type)
+    await _ask_cargo_type(message)
 
 
 @router.message(LoadPost.waiting_weight)
@@ -125,7 +207,14 @@ async def load_weight(message: Message, state: FSMContext) -> None:
 
     await state.update_data(weight_t=weight)
     await state.set_state(LoadPost.waiting_price)
-    await message.answer("💰 Narxni kiriting (so'mda, masalan: 500000):")
+    await _ask_price(message)
+
+
+@router.message(LoadPost.waiting_price, F.text == BACK_TEXT)
+async def load_price_back(message: Message, state: FSMContext) -> None:
+    """Narx → vazn."""
+    await state.set_state(LoadPost.waiting_weight)
+    await _ask_weight(message)
 
 
 @router.message(LoadPost.waiting_price)
@@ -150,8 +239,17 @@ async def load_price(message: Message, state: FSMContext) -> None:
         f"⚖️ Vazn: {data['weight_t']} t\n"
         f"💰 Narx: {_fmt_price(price)}\n\n"
         f"Tasdiqlaysizmi?",
-        reply_markup=confirm_kb(),
+        reply_markup=confirm_kb(back_data="bk|load|price"),
     )
+
+
+@router.callback_query(LoadPost.waiting_confirm, F.data == "bk|load|price")
+async def load_confirm_back(callback: CallbackQuery, state: FSMContext) -> None:
+    """Tasdiq → narx."""
+    await state.set_state(LoadPost.waiting_price)
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await _ask_price(callback.message)
+    await callback.answer()
 
 
 @router.callback_query(LoadPost.waiting_confirm, F.data == "confirm_yes")

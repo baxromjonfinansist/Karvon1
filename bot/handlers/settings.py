@@ -10,8 +10,9 @@ from aiogram.types import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.keyboards import role_choice_kb
+from bot.keyboards import BACK_TEXT, role_choice_kb
 from bot.services.user_service import get_or_none
+from bot.states import RoleChange
 from db.models import UserRole
 
 router = Router(name="settings")
@@ -134,14 +135,24 @@ async def toggle_notify(callback: CallbackQuery, session: AsyncSession) -> None:
 
 @router.callback_query(F.data == "change_role")
 async def change_role_start(callback: CallbackQuery, state: FSMContext) -> None:
-    # Haqiqiy FSM state o'rnatilmaydi (None qoladi) — shu bilan mavjud
-    # ro'yxatdan o'tish oqimi (role_chosen, StateFilter(None)) qayta ishlaydi.
-    # "reregister" belgisi state ma'lumotida saqlanib, oxirida yangi user
-    # yaratish o'rniga mavjudini yangilash uchun ishlatiladi.
+    # RoleChange.waiting_role — «⬅️ Orqaga» profilga qaytarishi uchun kerak
+    # (role_chosen bu state'ni ham qabul qiladi). "reregister" belgisi state
+    # ma'lumotida saqlanib, oxirida yangi user yaratish o'rniga mavjudini
+    # yangilash uchun ishlatiladi.
     await state.update_data(reregister=True)
+    await state.set_state(RoleChange.waiting_role)
     await callback.message.edit_reply_markup(reply_markup=None)
     await callback.message.answer(
         "🔄 <b>Rolni o'zgartirish</b>\n\nYangi rolingizni tanlang:",
-        reply_markup=role_choice_kb(),
+        reply_markup=role_choice_kb(with_back=True),
     )
     await callback.answer()
+
+
+@router.message(RoleChange.waiting_role, F.text == BACK_TEXT)
+async def change_role_back(
+    message: Message, state: FSMContext, session: AsyncSession
+) -> None:
+    """Rol tanlashdan → profil (sozlamalar) bosqichiga."""
+    await state.clear()
+    await show_profile(message, session)

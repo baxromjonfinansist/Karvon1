@@ -11,6 +11,12 @@ class DriverReg(StatesGroup):
     waiting_notify = State()
 
 
+class RoleChange(StatesGroup):
+    """Sozlamalardan rol o'zgartirish — «⬅️ Orqaga» profilga qaytarishi uchun."""
+
+    waiting_role = State()
+
+
 class FeedbackFlow(StatesGroup):
     waiting_text = State()
 
