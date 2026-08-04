@@ -91,12 +91,19 @@ class FakeSession:
 
 
 class FakeBot:
-    """copy_message chaqiruvlarini sanaydi; blocked/error id'lar xato tashlaydi."""
+    """copy_message/delete_message chaqiruvlarini sanaydi; blocked/error id'lar xato tashlaydi."""
 
-    def __init__(self, blocked_ids: set[int] | None = None, error_ids: set[int] | None = None):
+    def __init__(
+        self,
+        blocked_ids: set[int] | None = None,
+        error_ids: set[int] | None = None,
+        undeletable_ids: set[int] | None = None,
+    ):
         self.blocked_ids = blocked_ids or set()
         self.error_ids = error_ids or set()
+        self.undeletable_ids = undeletable_ids or set()  # delete_message xato beradi
         self.copied: list[tuple] = []
+        self.deleted: list[tuple] = []
 
     async def copy_message(self, chat_id, from_chat_id, message_id, **kw):
         if chat_id in self.blocked_ids:
@@ -104,6 +111,12 @@ class FakeBot:
         if chat_id in self.error_ids:
             raise TelegramAPIError(method=None, message="boshqa xato")
         self.copied.append((chat_id, from_chat_id, message_id))
+        return SimpleNamespace(message_id=1000 + chat_id)
+
+    async def delete_message(self, chat_id, message_id):
+        if chat_id in self.undeletable_ids:
+            raise TelegramAPIError(method=None, message="message can't be deleted")
+        self.deleted.append((chat_id, message_id))
 
 
 def _cb_datas(markup) -> list[str]:
@@ -444,6 +457,118 @@ def test_broadcast_send_bloklagan_userlar_umumiy_oqimni_toxtatmaydi(monkeypatch)
 
     # 3-chi userga baribir yuborilgan — oqim bloklanganlarda to'xtamadi
     assert bot.copied == [(3, 1, 5)]
+
+
+# ---------------------------------------------------------------------------
+# 🗑 Yuborilgan xabarnomani hammadan o'chirish (admin so'radi)
+# ---------------------------------------------------------------------------
+
+async def _fake_sleep_noop(*_):
+    pass
+
+
+def _send_and_get_report(monkeypatch, recipient_ids, bot=None):
+    """Yordamchi: broadcast_send'ni chaqirib, hisobot xabarini qaytaradi."""
+    _patch_recipient_ids(monkeypatch, recipient_ids)
+    monkeypatch.setattr(admin_broadcast.asyncio, "sleep", _fake_sleep_noop)
+    monkeypatch.setattr(admin_broadcast, "_is_admin", lambda tg_id: tg_id == 1)
+    state = FakeState(BroadcastFlow.waiting_confirm, {
+        "target_type": "all", "content_chat_id": 1, "content_message_id": 5,
+    })
+    cb = FakeCallback("bcast|send")
+    bot = bot or FakeBot()
+    asyncio.run(admin_broadcast.broadcast_send(cb, state, FakeSession(), bot))
+    return cb, bot
+
+
+def test_broadcast_send_report_has_delete_button(monkeypatch):
+    cb, bot = _send_and_get_report(monkeypatch, [1, 2, 3])
+
+    report_text, kb = cb.message.answers[-1]
+    datas = _cb_datas(kb)
+    assert any(d.startswith("bcast|del|") for d in datas)
+
+
+def test_broadcast_send_hech_kimga_yetmasa_delete_tugmasi_yoq(monkeypatch):
+    bot = FakeBot(blocked_ids={1, 2, 3})
+    cb, bot = _send_and_get_report(monkeypatch, [1, 2, 3], bot=bot)
+
+    report_text, kb = cb.message.answers[-1]
+    if kb is not None:
+        assert not any(d.startswith("bcast|del|") for d in _cb_datas(kb))
+
+
+def test_broadcast_delete_sent_barchasidan_ochiradi(monkeypatch):
+    cb, bot = _send_and_get_report(monkeypatch, [1, 2, 3])
+    broadcast_id = _cb_datas(cb.message.answers[-1][1])[0].split("|")[2]
+
+    del_cb = FakeCallback(f"bcast|del|{broadcast_id}")
+    asyncio.run(admin_broadcast.broadcast_delete_sent(del_cb, bot))
+
+    assert set(bot.deleted) == {(1, 1001), (2, 1002), (3, 1003)}
+
+
+def test_broadcast_delete_sent_admin_emas_ochirmaydi(monkeypatch):
+    cb, bot = _send_and_get_report(monkeypatch, [1, 2, 3])
+    broadcast_id = _cb_datas(cb.message.answers[-1][1])[0].split("|")[2]
+
+    del_cb = FakeCallback(f"bcast|del|{broadcast_id}", user_id=999)  # admin emas
+    asyncio.run(admin_broadcast.broadcast_delete_sent(del_cb, bot))
+
+    assert bot.deleted == []
+    assert del_cb.answered[-1][1] is True  # show_alert
+
+
+def test_broadcast_delete_sent_qisman_xato_umumiy_oqimni_toxtatmaydi(monkeypatch):
+    bot = FakeBot(undeletable_ids={2})  # 2-chi juda eski/allaqachon o'chirilgan
+    cb, bot = _send_and_get_report(monkeypatch, [1, 2, 3], bot=bot)
+    broadcast_id = _cb_datas(cb.message.answers[-1][1])[0].split("|")[2]
+
+    del_cb = FakeCallback(f"bcast|del|{broadcast_id}")
+    asyncio.run(admin_broadcast.broadcast_delete_sent(del_cb, bot))
+
+    # 1 va 3 o'chdi, 2 xato berdi — lekin oqim to'xtamadi
+    assert set(bot.deleted) == {(1, 1001), (3, 1003)}
+    result_text = del_cb.message.edits[-1][0]
+    assert "2" in result_text and "3" in result_text  # 2/3 o'chirildi
+
+
+def test_broadcast_delete_sent_tugma_qayta_bosilsa_alert(monkeypatch):
+    """Bir marta o'chirilgan xabarnomani qayta o'chirishga urinish — jim xato bermaydi."""
+    cb, bot = _send_and_get_report(monkeypatch, [1, 2, 3])
+    broadcast_id = _cb_datas(cb.message.answers[-1][1])[0].split("|")[2]
+
+    del_cb1 = FakeCallback(f"bcast|del|{broadcast_id}")
+    asyncio.run(admin_broadcast.broadcast_delete_sent(del_cb1, bot))
+    bot.deleted.clear()
+
+    del_cb2 = FakeCallback(f"bcast|del|{broadcast_id}")
+    asyncio.run(admin_broadcast.broadcast_delete_sent(del_cb2, bot))
+
+    assert bot.deleted == []  # ikkinchi marta hech narsa o'chirilmadi
+    assert del_cb2.answered[-1][1] is True  # show_alert — "topilmadi"
+
+
+def test_broadcast_delete_sent_notogri_id_alert(monkeypatch):
+    cb, bot = _send_and_get_report(monkeypatch, [1, 2, 3])
+
+    del_cb = FakeCallback("bcast|del|999999")  # hech qachon mavjud bo'lmagan id
+    asyncio.run(admin_broadcast.broadcast_delete_sent(del_cb, bot))
+
+    assert bot.deleted == []
+    assert del_cb.answered[-1][1] is True
+
+
+def test_broadcast_registry_bounded_eski_yozuvlar_chiqib_ketadi(monkeypatch):
+    """Xotira cheksiz o'smasin — juda ko'p broadcast keyin eskilari unutiladi."""
+    ids = []
+    for _ in range(admin_broadcast._MAX_TRACKED_BROADCASTS + 5):
+        cb, bot = _send_and_get_report(monkeypatch, [1])
+        ids.append(_cb_datas(cb.message.answers[-1][1])[0].split("|")[2])
+
+    assert len(admin_broadcast._SENT_BROADCASTS) <= admin_broadcast._MAX_TRACKED_BROADCASTS
+    # eng birinchisi endi registrda yo'q
+    assert int(ids[0]) not in admin_broadcast._SENT_BROADCASTS
 
 
 # ---------------------------------------------------------------------------

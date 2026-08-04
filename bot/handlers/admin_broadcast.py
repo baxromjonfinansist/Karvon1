@@ -28,6 +28,29 @@ _PAGE_SIZE = 10
 # Sekundiga ~20 xabar — flood limitdan saqlanish uchun har xabardan keyin kutish.
 _SEND_DELAY = 0.05
 
+# ---------------------------------------------------------------------------
+# Yuborilgan broadcast'larni "qaytarib olish" (hammadan o'chirish) uchun
+# jarayon ichidagi reyestr: broadcast_id -> [(chat_id, message_id), ...].
+# DB emas — bot qayta ishga tushsa eski broadcastlar o'chirilmaydi, bu
+# qabul qilingan cheklov (odatda o'chirish yuborilgandan darhol keyin
+# bosiladi). Xotira cheksiz o'smasligi uchun eng eski yozuvlar chiqarib
+# tashlanadi.
+# ---------------------------------------------------------------------------
+_SENT_BROADCASTS: dict[int, list[tuple[int, int]]] = {}
+_MAX_TRACKED_BROADCASTS = 20
+_next_broadcast_id = 0
+
+
+def _register_sent_broadcast(targets: list[tuple[int, int]]) -> int:
+    global _next_broadcast_id
+    _next_broadcast_id += 1
+    broadcast_id = _next_broadcast_id
+    _SENT_BROADCASTS[broadcast_id] = targets
+    while len(_SENT_BROADCASTS) > _MAX_TRACKED_BROADCASTS:
+        oldest = min(_SENT_BROADCASTS)
+        del _SENT_BROADCASTS[oldest]
+    return broadcast_id
+
 _ROLE_GROUP_LABELS = {
     "driver": "🚛 Haydovchilar",
     "cargo_provider": "📦 Yuk beruvchilar",
@@ -128,6 +151,14 @@ def _confirm_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="✅ Yuborish", callback_data="bcast|send"),
         InlineKeyboardButton(text="❌ Bekor qilish", callback_data="bcast|cancel"),
+    ]])
+
+
+def _delete_report_kb(broadcast_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(
+            text="🗑 Xabarni hammadan o'chirish", callback_data=f"bcast|del|{broadcast_id}",
+        )
     ]])
 
 
@@ -334,14 +365,16 @@ async def broadcast_send(
     sent = 0
     blocked = 0
     errors = 0
+    sent_targets: list[tuple[int, int]] = []   # (chat_id, message_id) — o'chirish uchun
     for tg_id in recipient_ids:
         try:
-            await bot.copy_message(
+            result = await bot.copy_message(
                 chat_id=tg_id,
                 from_chat_id=content_chat_id,
                 message_id=content_message_id,
             )
             sent += 1
+            sent_targets.append((tg_id, result.message_id))
         except TelegramForbiddenError:
             blocked += 1
         except TelegramAPIError:
@@ -350,10 +383,62 @@ async def broadcast_send(
         await asyncio.sleep(_SEND_DELAY)
 
     await state.clear()
-    await callback.message.answer(
+
+    report_text = (
         "📊 <b>Xabarnoma hisoboti</b>\n\n"
         f"Jami: {len(recipient_ids)}\n"
         f"✅ Yuborildi: {sent}\n"
         f"🚫 Bloklagan: {blocked}\n"
         f"⚠️ Xato: {errors}"
+    )
+    kb = None
+    if sent_targets:
+        broadcast_id = _register_sent_broadcast(sent_targets)
+        kb = _delete_report_kb(broadcast_id)
+    await callback.message.answer(report_text, reply_markup=kb)
+
+
+# ---------------------------------------------------------------------------
+# 6. Yuborilgan xabarnomani hammadan o'chirish ("qaytarib olish")
+# ---------------------------------------------------------------------------
+
+@router.callback_query(F.data.startswith("bcast|del|"))
+async def broadcast_delete_sent(callback: CallbackQuery, bot: Bot) -> None:
+    """Hisobot tugmasi — sizga yoki boshqasiga yuborilgan xabarni har bir
+    qabul qiluvchining chatidan o'chiradi.
+
+    FSM state talab qilinmaydi (yuborish allaqachon tugagan, state
+    tozalangan) — faqat admin ekanligi va broadcast_id reyestrda borligi
+    tekshiriladi. Bir marta o'chirilgandan keyin reyestrdan olib
+    tashlanadi, shuning uchun qayta bosish jim alert beradi.
+    """
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+
+    broadcast_id = int(callback.data.split("|", 2)[2])
+    targets = _SENT_BROADCASTS.pop(broadcast_id, None)
+    if not targets:
+        await callback.answer(
+            "Bu xabarnoma topilmadi — eskirgan yoki allaqachon o'chirilgan.",
+            show_alert=True,
+        )
+        return
+
+    deleted = 0
+    failed = 0
+    for chat_id, message_id in targets:
+        try:
+            await bot.delete_message(chat_id, message_id)
+            deleted += 1
+        except TelegramAPIError:
+            # Ko'p tarqalgan sabab: 48 soatdan eski xabar — Telegram
+            # boshqa foydalanuvchi chatidan o'chirishga ruxsat bermaydi.
+            failed += 1
+
+    await callback.answer(f"🗑 O'chirildi: {deleted}/{len(targets)}")
+    await callback.message.edit_text(
+        f"🗑 <b>Xabarnoma o'chirildi</b>\n\n"
+        f"{deleted}/{len(targets)} ta qabul qiluvchidan o'chirildi."
+        + (f"\n⚠️ {failed} tasi o'chmadi (juda eski yoki allaqachon o'chirilgan)." if failed else "")
     )
