@@ -95,6 +95,8 @@ def main_menu_driver_kb() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="📦 Yuklar")],
             [KeyboardButton(text="📋 Bitimlarim"), KeyboardButton(text="⚙️ Sozlamalar")],
             [KeyboardButton(text="💬 Fikr-mulohaza"), KeyboardButton(text="📞 Murojaat")],
+            # Faza 6 — mavjud userlar xohlasa instruksiyani qayta ko'rishi uchun.
+            [KeyboardButton(text="📖 Instruksiya")],
             [KeyboardButton(text="🏠 Asosiy bo'lim")],
         ],
         resize_keyboard=True,
@@ -107,6 +109,8 @@ def main_menu_provider_kb() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="➕ Yuk joylash"), KeyboardButton(text="📦 Mening yuklarim")],
             [KeyboardButton(text="⚙️ Sozlamalar")],
             [KeyboardButton(text="💬 Fikr-mulohaza"), KeyboardButton(text="📞 Murojaat")],
+            # Faza 6 — mavjud userlar xohlasa instruksiyani qayta ko'rishi uchun.
+            [KeyboardButton(text="📖 Instruksiya")],
             [KeyboardButton(text="🏠 Asosiy bo'lim")],
         ],
         resize_keyboard=True,

@@ -62,6 +62,8 @@ def _admin_menu_kb() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="📇 Userlar ro'yxati")],
             # Faza 5 — broadcast: matn/media yuborish (admin_broadcast.py).
             [KeyboardButton(text="📢 Xabarnoma")],
+            # Faza 6 — bot instruksiyasi: video/matn (instruction.py).
+            [KeyboardButton(text="🎬 Instruksiya")],
         ],
         resize_keyboard=True,
     )

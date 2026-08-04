@@ -27,6 +27,7 @@ from bot.keyboards import (
     vehicle_type_kb,
 )
 from bot.services.load_service import get_ranked_viloyats
+from bot.services.settings_service import get_instruction
 from bot.services.user_service import (
     create_user,
     get_or_none,
@@ -80,6 +81,18 @@ async def _notify_admins_safe(bot: "Bot | None", user) -> None:
         await notify_admins_new_user(bot, user)
     except Exception:
         log.exception("notify_admins_new_user kutilmagan xato bilan tugadi")
+
+
+WELCOME_TEXT = "Yuk Logistika Marketplace-ga xush kelibsiz!\n\nRo'lni tanlang:"
+
+
+def _instruction_ack_kb() -> InlineKeyboardMarkup:
+    """Faza 6 — instruksiya ko'rsatilgandan keyingi ikkita tugma: ikkalasi
+    ham (Ko'rdim/Keyinroq farqsiz) rol tanlashga o'tkazadi."""
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Ko'rdim", callback_data="instr|seen"),
+        InlineKeyboardButton(text="⏭ Keyinroq", callback_data="instr|later"),
+    ]])
 
 
 async def _send_main_menu(message: Message, role: UserRole) -> None:
@@ -182,11 +195,35 @@ async def cmd_start(message: Message, session: AsyncSession, state: FSMContext) 
         await _send_main_menu(message, user.role)
         return
 
-    await message.answer(
-        "Yuk Logistika Marketplace-ga xush kelibsiz!\n\n"
-        "Ro'lni tanlang:",
-        reply_markup=role_choice_kb(),
-    )
+    # Faza 6: yangi (hali ro'yxatdan o'tmagan) user uchun — instruksiya
+    # sozlangan bo'lsa (video va/yoki matn) avval shuni ko'rsatamiz, keyin
+    # «✅ Ko'rdim»/«⏭ Keyinroq» — IKKALASI HAM rol tanlashga o'tkazadi.
+    # Sozlanmagan bo'lsa — to'g'ridan rol tanlash (eski xatti-harakat).
+    instruction = await get_instruction(session)
+    if instruction["video_file_id"] or instruction["text"]:
+        if instruction["video_file_id"]:
+            await message.answer_video(instruction["video_file_id"])
+        if instruction["text"]:
+            await message.answer(instruction["text"])
+        await message.answer(
+            "Botdan qanday foydalanishni ko'rsatib berdik. Davom etamizmi?",
+            reply_markup=_instruction_ack_kb(),
+        )
+        return
+
+    await message.answer(WELCOME_TEXT, reply_markup=role_choice_kb())
+
+
+# ---------------------------------------------------------------------------
+# Faza 6 — instruksiya ko'rsatilgandan keyin: ikkala tugma ham (Ko'rdim/
+# Keyinroq) rol tanlashga o'tkazadi.
+# ---------------------------------------------------------------------------
+
+@router.callback_query(F.data.in_(["instr|seen", "instr|later"]))
+async def instruction_ack(callback: CallbackQuery) -> None:
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer(WELCOME_TEXT, reply_markup=role_choice_kb())
+    await callback.answer()
 
 
 # ---------------------------------------------------------------------------

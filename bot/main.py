@@ -17,6 +17,7 @@ from bot.handlers import (
     admin_users,
     driver,
     fallback,
+    instruction,
     misc,
     provider,
     start,
@@ -126,6 +127,7 @@ async def main() -> None:
     dp.include_router(admin.router)
     dp.include_router(admin_users.router)
     dp.include_router(admin_broadcast.router)
+    dp.include_router(instruction.router)
     dp.include_router(settings_handler.router)
     dp.include_router(misc.router)
     # Fallback (catch-all "Tushunarsiz buyruq") — DOIM eng oxirida bo'lishi shart

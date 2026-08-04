@@ -48,3 +48,10 @@ class BroadcastFlow(StatesGroup):
     waiting_checklist = State()     # guruh a'zolarini ☑️/⬜️ bilan belgilash
     waiting_content = State()       # matn yoki media kutilmoqda
     waiting_confirm = State()       # preview + ✅ Yuborish / ❌ Bekor qilish
+
+
+class InstructionFlow(StatesGroup):
+    """Faza 6 — admin bot instruksiyasi (video/matn) yuklaydi."""
+
+    waiting_video = State()
+    waiting_text = State()

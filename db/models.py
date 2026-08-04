@@ -343,3 +343,20 @@ class LogistBlocklist(Base):
 
     def __repr__(self) -> str:
         return f"<LogistBlocklist {self.phone_norm}>"
+
+
+class AppSetting(Base):
+    """Umumiy key-value sozlamalar jadvali (Faza 6: instruksiya video/matn —
+    kelajakda boshqa bot-darajasidagi sozlamalar ham shu yerda saqlanadi).
+    """
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    file_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    def __repr__(self) -> str:
+        return f"<AppSetting {self.key}>"
