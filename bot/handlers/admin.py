@@ -60,6 +60,8 @@ def _admin_menu_kb() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="📊 Statistika"), KeyboardButton(text="📈 Dashboard")],
             # Faza 4.2 — sahifalangan/filtrlangan userlar ro'yxati (admin_users.py).
             [KeyboardButton(text="📇 Userlar ro'yxati")],
+            # Faza 5 — broadcast: matn/media yuborish (admin_broadcast.py).
+            [KeyboardButton(text="📢 Xabarnoma")],
         ],
         resize_keyboard=True,
     )

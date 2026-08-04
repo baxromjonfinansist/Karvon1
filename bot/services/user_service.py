@@ -260,14 +260,17 @@ _DRIVER_LIKE_ROLES = (UserRole.driver, UserRole.asset_owner, UserRole.staff_driv
 async def list_users(
     session: AsyncSession,
     role_filter: Optional[str] = None,
+    viloyat_filter: Optional[str] = None,
     offset: int = 0,
     limit: int = 10,
 ) -> tuple[list[User], bool]:
-    """Admin «Userlar ro'yxati» uchun sahifalangan foydalanuvchilar (Faza 4.2).
+    """Admin «Userlar ro'yxati» / broadcast uchun sahifalangan foydalanuvchilar.
 
     `role_filter`: None/"all" — barchasi; "driver" — driver + eski
     asset_owner/staff_driver (hali migratsiya qilmagan bo'lishi mumkin);
-    "cargo_provider" — faqat yuk beruvchilar. Eng yangi ro'yxatdan
+    "cargo_provider" — faqat yuk beruvchilar. `viloyat_filter` (Faza 5,
+    broadcast) berilsa — faqat shu `pref_origin`ga ega userlar qoladi
+    (ikkalasi birga ham qo'llanilishi mumkin). Eng yangi ro'yxatdan
     o'tganlar birinchi. Qaytaradi: (sahifa, yana_bormi).
     """
     result = await session.execute(select(User).order_by(User.created_at.desc()))
@@ -279,9 +282,33 @@ async def list_users(
         rows = [u for u in rows if u.role == UserRole.cargo_provider]
     # None yoki "all" — filtrsiz, barcha rollar.
 
+    if viloyat_filter:
+        rows = [u for u in rows if u.pref_origin == viloyat_filter]
+
     page = rows[offset:offset + limit]
     has_more = len(rows) > offset + limit
     return page, has_more
+
+
+async def count_users_by_viloyat(session: AsyncSession) -> list[tuple[str, int]]:
+    """Har viloyat (`pref_origin`) bo'yicha nechta user bor (Faza 5 — broadcast).
+
+    `get_ranked_viloyats`ga o'xshash: barcha viloyatlar qaytadi (0 talari ham),
+    user soni bo'yicha kamayish tartibida.
+    """
+    from bot.services.load_service import ALL_VILOYATS
+
+    rows = (
+        await session.execute(
+            select(User.pref_origin, func.count(User.id))
+            .where(User.pref_origin.isnot(None))
+            .group_by(User.pref_origin)
+        )
+    ).all()
+    counts = {v: c for v, c in rows}
+    for v in ALL_VILOYATS:
+        counts.setdefault(v, 0)
+    return sorted(counts.items(), key=lambda x: -x[1])
 
 
 async def seed_default_routes(session: AsyncSession) -> None:

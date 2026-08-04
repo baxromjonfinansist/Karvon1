@@ -11,7 +11,16 @@ from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import BotCommand, TelegramObject, Update
 
 from bot.config import settings
-from bot.handlers import admin, admin_users, driver, fallback, misc, provider, start
+from bot.handlers import (
+    admin,
+    admin_broadcast,
+    admin_users,
+    driver,
+    fallback,
+    misc,
+    provider,
+    start,
+)
 from bot.handlers import settings as settings_handler
 from bot.services.channel_reader import run_reader_forever, stop_reader
 from bot.services.notify_service import (
@@ -116,6 +125,7 @@ async def main() -> None:
     dp.include_router(provider.router)
     dp.include_router(admin.router)
     dp.include_router(admin_users.router)
+    dp.include_router(admin_broadcast.router)
     dp.include_router(settings_handler.router)
     dp.include_router(misc.router)
     # Fallback (catch-all "Tushunarsiz buyruq") — DOIM eng oxirida bo'lishi shart

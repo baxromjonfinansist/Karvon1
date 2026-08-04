@@ -38,3 +38,13 @@ class LoadPost(StatesGroup):
 class RatingFlow(StatesGroup):
     waiting_score = State()
     waiting_comment = State()
+
+
+class BroadcastFlow(StatesGroup):
+    """Faza 5 — admin xabarnoma (broadcast): qabul qiluvchi tanlash → kontent → tasdiq → yuborish."""
+
+    waiting_target = State()        # 👥 Barchaga / 🎯 Guruh bo'yicha
+    waiting_group_choice = State()  # rol yoki viloyat tanlash
+    waiting_checklist = State()     # guruh a'zolarini ☑️/⬜️ bilan belgilash
+    waiting_content = State()       # matn yoki media kutilmoqda
+    waiting_confirm = State()       # preview + ✅ Yuborish / ❌ Bekor qilish
