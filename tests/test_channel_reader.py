@@ -173,6 +173,90 @@ def test_supervisor_retries_temporary_error(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Polling sikli — uzilgan client "tirik o'lik" holatda qolmasligi kerak
+#
+# Prod hodisasi (2026-08-04 20:35 → 2026-08-05 05:40, ~9 soat): Telethon
+# client uzilib qoldi, `get_messages` har kanal uchun
+# `ConnectionError: Cannot send requests while disconnected` berdi. Polling
+# sikli bu xatoni KANALGA XOS deb hisoblab jim yutdi va aylanaverdi —
+# supervisor hech qachon xato ko'rmadi, qayta ulanmadi. Protsess "active",
+# bazaga esa bitta ham yangi yuk tushmadi (open yuklar 0 ga tushdi).
+# ---------------------------------------------------------------------------
+
+class _FakePollClient:
+    """`is_connected` va `get_messages` ni taqlid qiladi."""
+
+    def __init__(self, connected=True, exc=None):
+        self._connected = connected
+        self._exc = exc
+        self.calls: list = []
+
+    def is_connected(self):
+        return self._connected
+
+    async def get_messages(self, cid, **kw):
+        self.calls.append(cid)
+        if self._exc:
+            raise self._exc
+        return []
+
+
+def test_connection_error_is_recognized():
+    """Ulanish xatosi — clientga tegishli, kanalga emas."""
+    assert cr.is_connection_error(
+        ConnectionError("Cannot send requests while disconnected")
+    ) is True
+    assert cr.is_connection_error(asyncio.TimeoutError()) is True
+    assert cr.is_connection_error(ValueError("entity topilmadi")) is False
+
+
+def test_poll_once_raises_when_client_disconnected():
+    """Client uzilgan bo'lsa — so'rov urinmasdan supervisorga ko'tariladi."""
+    client = _FakePollClient(connected=False)
+    with pytest.raises(ConnectionError):
+        asyncio.run(cr._poll_once(client, [-100111], {-100111: None}, {}))
+    assert client.calls == []          # uzilgan clientga so'rov yuborilmadi
+
+
+def test_poll_once_reraises_connection_error():
+    """AYNAN prod bug'i: uzilish xatosi jim yutilmaydi — supervisor ko'radi."""
+    client = _FakePollClient(
+        exc=ConnectionError("Cannot send requests while disconnected")
+    )
+    with pytest.raises(ConnectionError):
+        asyncio.run(
+            cr._poll_once(client, [-100111, -100222], {-100111: None, -100222: None}, {})
+        )
+    # Birinchi kanaldayoq to'xtaydi — qolganini urinish ma'nosiz.
+    assert client.calls == [-100111]
+
+
+def test_poll_once_skips_channel_specific_error(monkeypatch):
+    """Kanalga xos xato — log qilinadi, qolgan kanallar o'qilaveradi."""
+    class _PerChannel(_FakePollClient):
+        async def get_messages(self, cid, **kw):
+            self.calls.append(cid)
+            if cid == -100999:
+                raise ValueError("Could not find the input entity")
+            return []
+
+    client = _PerChannel()
+    asyncio.run(
+        cr._poll_once(
+            client, [-100999, -100222], {-100999: None, -100222: None}, {}
+        )
+    )
+    assert client.calls == [-100999, -100222]   # ikkinchi kanal o'qildi
+
+
+def test_poll_once_reraises_fatal_auth_error():
+    """Sessiya bekor — polling siklida ham fatal bo'lib qoladi."""
+    client = _FakePollClient(exc=AuthKeyDuplicatedError(request=None))
+    with pytest.raises(AuthKeyDuplicatedError):
+        asyncio.run(cr._poll_once(client, [-100111], {-100111: None}, {}))
+
+
+# ---------------------------------------------------------------------------
 # Topic map — bo'sh xarita 100% drop qilmasligi kerak
 # ---------------------------------------------------------------------------
 

@@ -50,6 +50,19 @@ def is_fatal_auth_error(exc: BaseException) -> bool:
     return type(exc).__name__ in FATAL_AUTH_ERRORS
 
 
+def is_connection_error(exc: BaseException) -> bool:
+    """Ulanish darajasidagi xatomi — ya'ni BITTA kanalga emas, butun clientga?
+
+    Bunday xatoni kanal sathida jim yutish reader'ni "protsess tirik, yuk
+    kelmaydi" holatiga soladi: polling aylanaveradi, lekin client uzilgan va
+    hech qachon qayta ulanmaydi. Faqat supervisor (qayta ulanish) yordam
+    beradi — shu sabab yuqoriga ko'tariladi.
+
+    `ConnectionError` va `TimeoutError` — ikkalasi ham `OSError` merosxo'ri.
+    """
+    return isinstance(exc, (OSError, asyncio.TimeoutError))
+
+
 def next_backoff(attempt: int) -> int:
     """Qayta ulanishgacha kutish (eksponensial, BACKOFF_MAX bilan cheklangan)."""
     delay = BACKOFF_BASE * (2 ** max(0, attempt - 1))
@@ -312,6 +325,36 @@ async def _process_message(
     )
 
 
+async def _poll_once(client, channel_ids, topic_maps, last_ids) -> None:
+    """Bitta polling sikli — har kanaldan yangi xabarlarni o'qiydi.
+
+    Xato siyosati (prod hodisasidan keyin aniqlashtirilgan):
+      - KANALGA XOS xato (entity yechilmadi, guruhdan chiqarilgan) — log
+        qilinadi, qolgan kanallar o'qilaveradi.
+      - ULANISH yoki SESSIYA xatosi — ko'tariladi. Ular butun clientga
+        tegishli; supervisor qayta ulanmaguncha hech qaysi kanal ishlamaydi.
+    """
+    if not client.is_connected():
+        raise ConnectionError("Telethon client uzilgan — qayta ulanish kerak")
+
+    for cid in channel_ids:
+        regions = topic_maps[cid]
+        try:
+            msgs = await client.get_messages(
+                cid, min_id=last_ids.get(cid, 0), limit=POLL_LIMIT
+            )
+            for m in reversed(msgs):   # eskidan yangiga
+                if m.id > last_ids.get(cid, 0):
+                    last_ids[cid] = m.id
+                await _process_message(
+                    m.text or "", str(cid), regions, _topic_id_of(m), m.date
+                )
+        except Exception as exc:
+            if is_fatal_auth_error(exc) or is_connection_error(exc):
+                raise
+            log.error("Polling xato [%s]: %s", cid, exc)
+
+
 async def run_reader_forever(bot=None) -> None:
     """Reader supervisori — xato bo'lsa qayta ulanadi, sessiya o'lsa xabar beradi.
 
@@ -491,21 +534,9 @@ async def start_reader(_dp: object = None) -> None:
                 await refresh_blocklist(session)
         except Exception as exc:  # noqa: BLE001
             log.error("Blocklist refresh xato: %s", exc)
-        for cid in channel_ids:
-            regions = topic_maps[cid]
-            try:
-                msgs = await _client.get_messages(
-                    cid, min_id=last_ids.get(cid, 0), limit=POLL_LIMIT
-                )
-                for m in reversed(msgs):   # eskidan yangiga
-                    if m.id > last_ids.get(cid, 0):
-                        last_ids[cid] = m.id
-                    await _process_message(m.text or "", str(cid), regions, _topic_id_of(m), m.date)
-            except Exception as exc:
-                # Sessiya bekor bo'lsa — jim yutmaymiz, supervisor ko'radi.
-                if is_fatal_auth_error(exc):
-                    raise
-                log.error("Polling xato [%s]: %s", cid, exc)
+        # Ulanish/sessiya xatosi bu yerda YUTILMAYDI — supervisorga chiqadi
+        # va qayta ulanish boshlanadi (`_poll_once` izohiga qarang).
+        await _poll_once(_client, channel_ids, topic_maps, last_ids)
 
 
 async def stop_reader() -> None:
