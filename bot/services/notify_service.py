@@ -10,6 +10,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
+from bot.services.deeplink import build_load_deeplink
 from bot.services.load_service import (
     _dest_region,
     delete_stale_loads,
@@ -39,14 +40,19 @@ def _fmt(load: Load) -> str:
     return "🔔 <b>Yangi yuk!</b>\n" + format_load_card(load)
 
 
-def _take_kb(load_id: int) -> InlineKeyboardMarkup:
-    """Xabarnoma tugmalari: yukni olish + xabarnoma yoqmasa o'chirish taklifi.
+def _take_kb(load_id: int, load) -> InlineKeyboardMarkup:
+    """Xabarnoma tugmalari: yukni olish, raqamni ko'rish (deep-link), o'chirish.
 
+    "📞 Qo'ng'iroq qilish" — telefon karta matnida yo'q (`format_load_card`
+    `show_phone=False`), faqat shu tugma orqali (botga kirib) ko'rinadi.
     "🔕 O'chirish" — foydalanuvchi xabarnomadan bezovta bo'lsa, shu yerdan
     darhol o'chira olsin (Sozlamalarga borishga hojat qolmasin).
     """
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🤝 Olish", callback_data=f"take_{load_id}")],
+        [InlineKeyboardButton(
+            text="📞 Qo'ng'iroq qilish", url=build_load_deeplink(load_id),
+        )],
         [InlineKeyboardButton(text="🔕 Xabarnomani o'chirish", callback_data="notify_off")],
     ])
 
@@ -85,7 +91,7 @@ async def _notify_driver(bot: Bot, session, user: User) -> None:
 
     for load in reversed(loads):  # eng eskisidan yangisiga
         try:
-            await bot.send_message(user.telegram_id, _fmt(load), reply_markup=_take_kb(load.id))
+            await bot.send_message(user.telegram_id, _fmt(load), reply_markup=_take_kb(load.id, load))
         except TelegramAPIError:
             pass
         await asyncio.sleep(0.05)

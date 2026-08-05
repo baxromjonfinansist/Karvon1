@@ -130,3 +130,16 @@ def test_xabarnoma_kartasida_yosh_bor():
     assert "🔔 <b>Yangi yuk!</b>" in text
     assert "🚚 <b>Andijon → Toshkent</b>" in text
     assert "🕒 2 soat oldin" in text
+
+
+def test_take_kb_ichida_qongiroq_tugmasi_bor(monkeypatch):
+    monkeypatch.setattr(
+        "bot.services.notify_service.build_load_deeplink",
+        lambda load_id: f"https://t.me/TestBot?start=load_{load_id}",
+    )
+    load = SimpleNamespace(id=7)
+    kb = ns._take_kb(7, load)
+    texts = [b.text for row in kb.inline_keyboard for b in row]
+    urls = [b.url for row in kb.inline_keyboard for b in row if b.url]
+    assert "📞 Qo'ng'iroq qilish" in texts
+    assert "https://t.me/TestBot?start=load_7" in urls
