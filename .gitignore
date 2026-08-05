@@ -26,3 +26,7 @@ htmlcov/
 .vscode/
 .idea/
 .DS_Store
+
+# Ishchi worktree'lar (subagent-driven-development uchun izolyatsiya)
+.worktrees/
+.superpowers/
