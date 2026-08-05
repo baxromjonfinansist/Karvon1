@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Spec: `docs/superpowers/specs/2026-08-05-phone-button-trust-label-design.md` — barcha talablar shu yerdan.
-- Har vazifa: avval tushadigan test, keyin minimal implementatsiya, keyin `python3 -m pytest -q` to'liq yashil, keyin commit.
+- Har vazifa: avval tushadigan test, keyin minimal implementatsiya, keyin `python3 -m pytest tests/ -q` to'liq yashil, keyin commit.
 - Kod izohlari va nomlanish — mavjud repo konvensiyasi bo'yicha (o'zbekcha izohlar, `snake_case`).
 - Migratsiya zanjiri: joriy head — `20260804_app_settings`.
 - `.env`/parol/token hech qachon kodga yozilmaydi (bu loyihada allaqachon amal qiladi, o'zgarish yo'q).
@@ -80,7 +80,7 @@ Expected: xatosiz `loads.first_time_phone` chiqarilishi.
 
 - [ ] **Step 4: Testlar va import tekshiruvi**
 
-Run: `python3 -m pytest -q`
+Run: `python3 -m pytest tests/ -q`
 Expected: barcha mavjud testlar hali yashil (bu vazifa hali testga ega emas — faqat model+migratsiya).
 
 - [ ] **Step 5: Commit**
@@ -208,7 +208,7 @@ Expected: PASS (3/3).
 
 - [ ] **Step 5: To'liq test suite**
 
-Run: `python3 -m pytest -q`
+Run: `python3 -m pytest tests/ -q`
 Expected: barchasi yashil.
 
 - [ ] **Step 6: Commit**
@@ -331,7 +331,7 @@ Expected: PASS (7/7).
 
 - [ ] **Step 5: To'liq test suite**
 
-Run: `python3 -m pytest -q`
+Run: `python3 -m pytest tests/ -q`
 Expected: barchasi yashil.
 
 - [ ] **Step 6: Commit**
@@ -348,6 +348,7 @@ git commit -m "Deep-link: yuk raqamini botga tortish uchun sof funksiyalar"
 **Files:**
 - Modify: `bot/services/load_service.py:format_load_card` (58–76 qatorlar)
 - Test: `tests/test_load_card.py` (mavjud fayl — yangi testlar qo'shiladi)
+- Test: `tests/test_driver_menu.py` (71-83 qatorlar — mavjud test moslashtiriladi, Step 6)
 
 **Interfaces:**
 - Consumes: Task 3 dagi `bot.services.deeplink.build_load_deeplink`.
@@ -443,19 +444,54 @@ def format_load_card(load, now: Optional[datetime] = None, show_phone: bool = Fa
 Run: `python3 -m pytest tests/test_load_card.py -q`
 Expected: PASS (barchasi).
 
-- [ ] **Step 6: To'liq test suite**
+- [ ] **Step 6: `tests/test_driver_menu.py`dagi eski testni moslashtirish**
 
-Run: `python3 -m pytest -q`
-Expected: bu bosqichda BOSHQA testlar (masalan `tests/test_driver_menu.py`,
-`tests/test_notify_cleanup.py`) tushishi MUMKIN, chunki ular hali eski
-"telefon doim matnda" xatti-harakatiga tayangan bo'lishi mumkin — agar
-tushsa, ularni Task 5/6 da tugmani qo'shgandan keyin moslashtiring (bu
-tabiiy — keyingi vazifalar shu chaqiruvchi kodlarni yangilaydi).
+Run: `python3 -m pytest tests/test_driver_menu.py -q`
+Expected: FAIL — `test_driver_kartasi_umumiy_formatlovchini_ishlatadi`
+(`"📞 +998901234567" in text` — endi standart holatda telefon matnda yo'q,
+o'rniga ishonch yorlig'i bor).
 
-- [ ] **Step 7: Commit**
+`tests/test_driver_menu.py`da (71-83 qatorlar) shu testni ALMASHTIRING
+(eskisini o'chirib, o'rniga qo'ying). `driver_handlers._fmt_load` bu Task
+doirasida hali eski imzoda (`_fmt_load(load)`, parametrsiz) — Task 5da
+`show_phone` parametri qo'shiladi, shu sabab bu yerda faqat STANDART
+(parametrsiz) chaqiruv tekshiriladi:
+
+```python
+def test_driver_kartasi_default_holatda_telefon_yashirin():
+    """Standart chaqiruvda (_fmt_load(load)) telefon matnda YO'Q,
+    o'rniga ishonch yorlig'i bor — tugma keyingi vazifada qo'shiladi."""
+    load = SimpleNamespace(
+        id=1,
+        route=SimpleNamespace(origin="Toshkent", destination="Samarqand"),
+        contact_phone="+998901234567",
+        raw_text="",
+        note="Paxta",
+        cargo_type=None,
+        posted_at=datetime.utcnow() - timedelta(minutes=40),
+        first_time_phone=True,
+    )
+    text = driver_handlers._fmt_load(load)
+    assert "🕒 40 daqiqa oldin" in text
+    assert "+998901234567" not in text
+    assert "100% 1-qo'l" in text
+```
+
+`driver_handlers` — mavjud faylning boshida allaqachon
+`from bot.handlers import driver as driver_handlers` bilan import qilingan
+(agar boshqacha nom bo'lsa, faylning import blokidagi haqiqiy nomdan
+foydalaning).
+
+- [ ] **Step 7: To'liq test suite**
+
+Run: `python3 -m pytest tests/ -q`
+Expected: barchasi yashil (bu Task o'z-o'zidan to'liq, keyingi vazifaga
+qaram emas).
+
+- [ ] **Step 8: Commit**
 
 ```bash
-git add bot/services/load_service.py tests/test_load_card.py
+git add bot/services/load_service.py tests/test_load_card.py tests/test_driver_menu.py
 git commit -m "load_service: format_load_card show_phone param + 1-qo'l yorlig'i"
 ```
 
@@ -469,7 +505,7 @@ git commit -m "load_service: format_load_card show_phone param + 1-qo'l yorlig'i
 
 **Interfaces:**
 - Consumes: Task 3 (`build_load_deeplink`), Task 4 (`format_load_card(show_phone=...)`).
-- Produces: `_fmt_load(load, show_phone=False)`, `_take_kb(load_id, show_call_button=True)` — feed ro'yxatida telefon tugma orqali; "Olish" tasdiqlash/tasdiqlangan holatlarida haqiqiy raqam matnda (mavjud xatti-harakat saqlanadi — kod izohi: "Telefon o'chib qolmasligi uchun").
+- Produces: `_fmt_load(load, show_phone=False)`, `_take_kb(load_id, load=None)` — `load` berilsa "📞 Qo'ng'iroq qilish" tugmasi qo'shiladi. Feed ro'yxatida telefon tugma orqali; "Olish" tasdiqlash/tasdiqlangan holatlarida haqiqiy raqam matnda (mavjud xatti-harakat saqlanadi — kod izohi: "Telefon o'chib qolmasligi uchun").
 
 - [ ] **Step 1: `_fmt_load` va `_take_kb`ni yangilash**
 
@@ -522,33 +558,14 @@ bosgan, shu sabab raqam to'g'ridan ko'rsatiladi (mavjud kod izohi —
 
 (Bu — declined holat, foydalanuvchi hali olmagan, feed holatiga qaytadi — tugma bilan.)
 
-- [ ] **Step 4: Mavjud testni yangilash**
+- [ ] **Step 4: Yangi testlarni qo'shish**
 
-Run: `python3 -m pytest tests/test_driver_menu.py -q`
-Expected: FAIL — `test_driver_kartasi_umumiy_formatlovchini_ishlatadi`
-(`"📞 +998901234567" in text` — endi standart holatda telefon matnda yo'q).
-
-`tests/test_driver_menu.py`da (71-83 qatorlar) shu testni ikkitaga bo'ling:
+Task 4 `tests/test_driver_menu.py`ga `test_driver_kartasi_default_holatda_telefon_yashirin`
+testini allaqachon qo'shgan (standart, parametrsiz chaqiruv). Bu Task shu
+faylga endi YANGI `show_phone=True` va `_take_kb` testlarini qo'shadi
+(oldingi testni QAYTA YOZMANG — u joyida qoladi):
 
 ```python
-def test_driver_kartasi_default_holatda_telefon_yashirin():
-    """Standart holatda (show_phone bermasdan) telefon matnda YO'Q — tugma orqali."""
-    load = SimpleNamespace(
-        id=1,
-        route=SimpleNamespace(origin="Toshkent", destination="Samarqand"),
-        contact_phone="+998901234567",
-        raw_text="",
-        note="Paxta",
-        cargo_type=None,
-        posted_at=datetime.utcnow() - timedelta(minutes=40),
-        first_time_phone=True,
-    )
-    text = driver_handlers._fmt_load(load)
-    assert "🕒 40 daqiqa oldin" in text
-    assert "+998901234567" not in text
-    assert "100% 1-qo'l" in text
-
-
 def test_driver_kartasi_show_phone_true_bilan_raqam_koradi():
     load = SimpleNamespace(
         id=1,
@@ -564,9 +581,6 @@ def test_driver_kartasi_show_phone_true_bilan_raqam_koradi():
     assert "📞 +998901234567" in text
     assert "dispetcher" in text.lower() or "logist" in text.lower()
 ```
-
-Eski `test_driver_kartasi_umumiy_formatlovchini_ishlatadi` funksiyasini shu
-ikkitasi bilan ALMASHTIRING (o'chirib, o'rniga qo'ying).
 
 Xuddi shu faylga `_take_kb` uchun ham test qo'shing:
 
@@ -591,7 +605,7 @@ def test_take_kb_loadsiz_faqat_olish_tugmasi():
 
 - [ ] **Step 5: To'liq test suite**
 
-Run: `python3 -m pytest -q`
+Run: `python3 -m pytest tests/ -q`
 Expected: barchasi yashil.
 
 - [ ] **Step 6: Commit**
@@ -674,7 +688,7 @@ Buni faylning oxiriga (`test_xabarnoma_kartasida_yosh_bor`dan keyin) qo'shing.
 
 - [ ] **Step 4: To'liq test suite**
 
-Run: `python3 -m pytest -q`
+Run: `python3 -m pytest tests/ -q`
 Expected: barchasi yashil.
 
 - [ ] **Step 5: Commit**
@@ -721,7 +735,7 @@ Expected: xatosiz import (funksiya chaqirilmaydi, faqat syntax/import tekshiruvi
 
 - [ ] **Step 4: To'liq test suite**
 
-Run: `python3 -m pytest -q`
+Run: `python3 -m pytest tests/ -q`
 Expected: barchasi yashil (bu vazifa test talab qilmaydi — runtime-only, `main()` testlanmaydi loyihada allaqachon shunday).
 
 - [ ] **Step 5: Commit**
@@ -1077,7 +1091,7 @@ tushunmaydi (`pending_load_id` state'ga tushmaydi, `get_load_detail` chaqirilmay
 
 - [ ] **Step 7: To'liq test suite**
 
-Run: `python3 -m pytest -q`
+Run: `python3 -m pytest tests/ -q`
 Expected: barchasi yashil.
 
 - [ ] **Step 8: Commit**
@@ -1095,7 +1109,7 @@ git commit -m "start.py: deep-link bilan /start — yuk raqamini ochish oqimi"
 
 - [ ] **Step 1: To'liq test suite yakuniy tekshiruv**
 
-Run: `python3 -m pytest -q`
+Run: `python3 -m pytest tests/ -q`
 Expected: barcha testlar (yangi + eski, jami taxminan 230+) yashil.
 
 - [ ] **Step 2: `python3 -m compileall -q bot db` bilan sintaksis tekshiruvi**
