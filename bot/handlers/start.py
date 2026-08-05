@@ -26,7 +26,8 @@ from bot.keyboards import (
     role_choice_kb,
     vehicle_type_kb,
 )
-from bot.services.load_service import get_ranked_viloyats
+from bot.services.deeplink import parse_load_start_payload
+from bot.services.load_service import format_load_card, get_load_detail, get_ranked_viloyats
 from bot.services.settings_service import get_instruction
 from bot.services.user_service import (
     create_user,
@@ -190,10 +191,18 @@ async def cmd_start(message: Message, session: AsyncSession, state: FSMContext) 
     # (masalan yo'nalish tanlashda) "qotib qolgan" bo'lsa ham qutqaradi.
     await state.clear()
 
+    parts = (message.text or "").split(maxsplit=1)
+    deep_link_load_id = parse_load_start_payload(parts[1] if len(parts) > 1 else None)
+
     user = await get_or_none(session, message.from_user.id)
     if user:
+        if deep_link_load_id is not None:
+            await _show_deeplinked_load(message, session, deep_link_load_id)
         await _send_main_menu(message, user.role)
         return
+
+    if deep_link_load_id is not None:
+        await state.update_data(pending_load_id=deep_link_load_id)
 
     # Faza 6: yangi (hali ro'yxatdan o'tmagan) user uchun — instruksiya
     # sozlangan bo'lsa (video va/yoki matn) avval shuni ko'rsatamiz, keyin
@@ -272,15 +281,20 @@ async def driver_phone_back(message: Message, state: FSMContext) -> None:
 
 
 @router.message(DriverReg.waiting_phone, F.contact)
-async def driver_phone_contact(message: Message, state: FSMContext) -> None:
+async def driver_phone_contact(
+    message: Message, state: FSMContext, session: AsyncSession
+) -> None:
     phone = message.contact.phone_number
     await state.update_data(phone=phone)
+    await _reveal_pending_load_if_any(message, state, session)
     await state.set_state(DriverReg.waiting_vehicle_type)
     await _ask_vehicle_type(message)
 
 
 @router.message(DriverReg.waiting_phone, F.text)
-async def driver_phone_text(message: Message, state: FSMContext) -> None:
+async def driver_phone_text(
+    message: Message, state: FSMContext, session: AsyncSession
+) -> None:
     phone = _normalize_phone(message.text or "")
     if phone is None:
         await message.answer(
@@ -290,6 +304,7 @@ async def driver_phone_text(message: Message, state: FSMContext) -> None:
         return
 
     await state.update_data(phone=phone)
+    await _reveal_pending_load_if_any(message, state, session)
     await state.set_state(DriverReg.waiting_vehicle_type)
     await _ask_vehicle_type(message)
 
@@ -539,6 +554,33 @@ async def provider_phone_text(
     await _finish_provider_reg(message, state, session, phone, bot)
 
 
+async def _show_deeplinked_load(message: Message, session: AsyncSession, load_id: int) -> None:
+    """Deep-link orqali so'ralgan yukni ko'rsatadi (raqam ochiq holda).
+
+    Yuk topilmasa (band bo'lgan/eskirgan — 6 soatda o'chadi) — muloyim
+    xabar, oqim to'xtamaydi.
+    """
+    load = await get_load_detail(session, load_id)
+    if load is None:
+        await message.answer("Bu yuk endi mavjud emas, lekin yangi yuklar bor 👇")
+        return
+    await message.answer(
+        "📦 Siz ko'rmoqchi bo'lgan yuk:\n\n" + format_load_card(load, show_phone=True)
+    )
+
+
+async def _reveal_pending_load_if_any(
+    message: Message, state: FSMContext, session: AsyncSession
+) -> None:
+    """Deep-link orqali kutilayotgan yuk bo'lsa — ko'rsatadi va state'ni tozalaydi."""
+    data = await state.get_data()
+    load_id = data.get("pending_load_id")
+    if load_id is None:
+        return
+    await _show_deeplinked_load(message, session, load_id)
+    await state.update_data(pending_load_id=None)
+
+
 async def _finish_provider_reg(
     message: Message,
     state: FSMContext,
@@ -579,6 +621,10 @@ async def _finish_provider_reg(
         f"Asosiy menyu:",
         reply_markup=main_menu_provider_kb(),
     )
+
+    pending_load_id = data.get("pending_load_id")
+    if pending_load_id is not None:
+        await _show_deeplinked_load(message, session, pending_load_id)
 
 
 # ---------------------------------------------------------------------------
