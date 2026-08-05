@@ -3,6 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
+import sqlalchemy as sa
 from sqlalchemy import (
     BigInteger, Boolean, Column, DateTime, Enum, ForeignKey,
     Index, Integer, Numeric, String, Table, Text, func,
@@ -212,6 +213,7 @@ class Load(Base):
     status: Mapped[LoadStatus] = mapped_column(Enum(LoadStatus), server_default=LoadStatus.pending.value)
     provider_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
     posted_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    first_time_phone: Mapped[bool] = mapped_column(Boolean, server_default=sa.true())
 
     route: Mapped[Optional["Route"]] = relationship("Route", back_populates="loads")
     provider: Mapped[Optional["User"]] = relationship("User", back_populates="loads_posted")
