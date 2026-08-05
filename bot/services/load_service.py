@@ -55,20 +55,32 @@ def humanize_age(posted_at: Optional[datetime], now: Optional[datetime] = None) 
     return f"{hours // 24} kun oldin"
 
 
-def format_load_card(load, now: Optional[datetime] = None) -> str:
+def format_load_card(load, now: Optional[datetime] = None, show_phone: bool = False) -> str:
     """Yuk kartasining umumiy ko'rinishi — feed va xabarnoma bir xil bo'lsin.
 
-    Qatorlar: yo'nalish, telefon, yosh, manbadagi qolgan ma'lumot.
+    `show_phone=False` (standart): telefon matn sifatida YO'Q — chaqiruvchi
+    kod uni deep-link tugma orqali ko'rsatadi (`bot/services/deeplink.py`,
+    "📞 Qo'ng'iroq qilish"). Bu — tashqi haydovchilar guruhiga ulashilganda
+    raqam faqat botga kirgach ko'rinishi uchun (spec: 2026-08-05).
+    `show_phone=True` — faqat maxsus "reveal" nuqtalarida (deep-link orqali
+    kirgan/telefon bosqichini tugatgan user) haqiqiy raqam matnda beriladi.
     """
     route = f"{load.route.origin} → {load.route.destination}" if load.route else "—"
     body = (
         extract_body(load.raw_text or "", load.contact_phone)
         or load.note or load.cargo_type or "—"
     )
+    trust_line = (
+        "💯 100% 1-qo'l (birinchi marta)"
+        if getattr(load, "first_time_phone", False)
+        else "✅ 1-qo'l — dispetcher/logist yo'q"
+    )
     lines = [
         f"🚚 <b>{route}</b>",
-        f"📞 {load.contact_phone or '—'}",
+        trust_line,
     ]
+    if show_phone:
+        lines.append(f"📞 {load.contact_phone or '—'}")
     age = humanize_age(getattr(load, "posted_at", None), now)
     if age:
         lines.append(f"🕒 {age}")

@@ -68,7 +68,9 @@ def test_obuna_kodi_saqlangan():
     assert hasattr(admin_handlers, "grant_sub")
 
 
-def test_driver_kartasi_umumiy_formatlovchini_ishlatadi():
+def test_driver_kartasi_default_holatda_telefon_yashirin():
+    """Standart chaqiruvda (_fmt_load(load)) telefon matnda YO'Q,
+    o'rniga ishonch yorlig'i bor — tugma keyingi vazifada qo'shiladi."""
     load = SimpleNamespace(
         id=1,
         route=SimpleNamespace(origin="Toshkent", destination="Samarqand"),
@@ -77,7 +79,9 @@ def test_driver_kartasi_umumiy_formatlovchini_ishlatadi():
         note="Paxta",
         cargo_type=None,
         posted_at=datetime.utcnow() - timedelta(minutes=40),
+        first_time_phone=True,
     )
     text = driver_handlers._fmt_load(load)
     assert "🕒 40 daqiqa oldin" in text
-    assert "📞 +998901234567" in text
+    assert "+998901234567" not in text
+    assert "100% 1-qo'l" in text

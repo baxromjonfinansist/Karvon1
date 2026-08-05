@@ -94,7 +94,9 @@ def _load(**kw) -> SimpleNamespace:
 
 
 def test_kartada_yonalish_telefon_va_yosh_bor():
-    text = format_load_card(_load(), NOW)
+    # show_phone=True — telefon standart holatda endi matnda yo'q (Task 4),
+    # bu test hali ham "reveal" holatida raqam to'g'ri chiqishini tekshiradi.
+    text = format_load_card(_load(), NOW, show_phone=True)
     assert "🚚 <b>Toshkent → Samarqand</b>" in text
     assert "📞 +998901234567" in text
     assert "🕒 25 daqiqa oldin" in text
@@ -111,7 +113,8 @@ def test_karta_html_escape_qiladi():
 
 
 def test_karta_yonalishsiz_ham_ishlaydi():
-    text = format_load_card(_load(route=None, contact_phone=None), NOW)
+    # show_phone=True — route/telefon yo'q holatda ham "reveal" rejimi ishlaydi.
+    text = format_load_card(_load(route=None, contact_phone=None), NOW, show_phone=True)
     assert "🚚 <b>—</b>" in text
     assert "📞 —" in text
 
@@ -122,3 +125,31 @@ def test_karta_yonalishsiz_ham_ishlaydi():
 
 def test_fresh_oyna_6_soat():
     assert FRESH_MINUTES == 360
+
+
+# ---------------------------------------------------------------------------
+# format_load_card — show_phone parametri va "1-qo'l" ishonch yorlig'i
+# ---------------------------------------------------------------------------
+
+def test_karta_standart_holatda_telefonni_yashiradi():
+    load = _load(first_time_phone=True)
+    text = format_load_card(load, NOW)
+    assert "📞" not in text
+    assert load.contact_phone not in text
+
+
+def test_karta_show_phone_true_bolganda_raqamni_korsatadi():
+    load = _load(first_time_phone=True)
+    text = format_load_card(load, NOW, show_phone=True)
+    assert f"📞 {load.contact_phone}" in text
+
+
+def test_karta_first_time_phone_true_bolsa_100_foiz_yorligi():
+    text = format_load_card(_load(first_time_phone=True), NOW)
+    assert "100% 1-qo'l" in text
+
+
+def test_karta_first_time_phone_false_bolsa_dispetcher_yoq_yorligi():
+    text = format_load_card(_load(first_time_phone=False), NOW)
+    assert "dispetcher" in text.lower() or "logist" in text.lower()
+    assert "100%" not in text
