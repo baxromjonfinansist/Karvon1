@@ -793,6 +793,25 @@ def record_parse_correction(
         log.warning("FEEDBACK yozib bo'lmadi: %s", exc)
 
 
+async def _is_first_time_phone(session: AsyncSession, phone: Optional[str]) -> bool:
+    """Shu telefon `loads` jadvalida ilgari uchraganmi ("1-qo'l" yorlig'i uchun).
+
+    Telefon bo'lmasa — DB'ga murojaat qilinmaydi, `True` qaytariladi (nazariy
+    holat, `prepare_message` telefonsiz xabarni allaqachon tashlaydi).
+
+    Eslatma: yuklar 6 soatdan keyin (band bo'lmasa) butunlay o'chadi
+    (`delete_stale_loads`) — shu sabab bir xil raqam uzoq tanaffusdan keyin
+    qayta "birinchi marta" bo'lib chiqishi mumkin. Ongli qabul qilingan
+    soddalashtirish (spec: 2026-08-05-phone-button-trust-label-design.md).
+    """
+    if not phone:
+        return True
+    result = await session.execute(
+        select(Load.id).where(Load.contact_phone == phone).limit(1)
+    )
+    return result.scalar_one_or_none() is None
+
+
 async def save_parsed_load(
     session: AsyncSession,
     parsed: ParsedLoad,
@@ -823,6 +842,8 @@ async def save_parsed_load(
         else LoadStatus.pending
     )
 
+    first_time_phone = await _is_first_time_phone(session, parsed.contact)
+
     load = Load(
         source_channel=source_channel,
         raw_text=raw_text,
@@ -833,6 +854,7 @@ async def save_parsed_load(
         note=parsed.note,
         vehicle_type=classify_vehicle(raw_text, parsed.weight_t),
         status=status,
+        first_time_phone=first_time_phone,
     )
     if posted_at is not None:
         load.posted_at = posted_at
