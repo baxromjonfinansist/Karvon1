@@ -19,6 +19,9 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://u:p@localhost/db")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379")
 
 from bot.services.parser_service import (  # noqa: E402
+    _extract_route_with_preposition,
+    _find_city_in,
+    _ordered_cities,
     extract_note,
     normalize_phone,
     parse_with_regex,
@@ -56,6 +59,41 @@ def test_no_city_low_confidence():
     assert r.origin is None
     assert r.destination is None
     assert r.confidence < 0.7
+
+
+# ---------------------------------------------------------------------------
+# Apostrofsiz yozilgan shahar nomlari — matnda BOSHQA so'zlarda apostrof
+# bo'lsa, koordinata aralashmasligi kerak (bug: `_find_city_in`/
+# `_ordered_cities`/`_extract_route_with_preposition` ba'zan `tl` va
+# `tl_stripped` indekslarini aralashtirib, apostrofsiz yozilgan shahar
+# nomini (masalan "shorchidan") butunlay yo'qotib qo'yardi).
+# ---------------------------------------------------------------------------
+
+def test_find_city_apostrophe_typo_with_earlier_apostrophes():
+    """Matnda oldin apostrofli so'zlar bo'lsa ham, apostrofsiz shahar topilsin."""
+    text = "yukning og'irligi katta, to'g'ri shorchidan toshkentga yuk"
+    assert _find_city_in(text) == "Sho'rchi"
+
+
+def test_ordered_cities_apostrophe_typo():
+    """`_ordered_cities` da apostrofsiz yozuv uchun ham fallback ishlashi kerak."""
+    text = "yukning og'irligi katta, to'g'ri shorchidan toshkentga yuk"
+    assert _ordered_cities(text) == ["Sho'rchi", "Toshkent"]
+
+
+def test_preposition_route_apostrophe_typo():
+    """Kelishik qo'shimchasi bo'yicha yo'nalish — apostrofsiz shahar nomida ham."""
+    text = "yukning og'irligi katta, to'g'ri shorchidan toshkentga yuk"
+    assert _extract_route_with_preposition(text) == ("Sho'rchi", "Toshkent")
+
+
+def test_full_pipeline_apostrophe_typo_route_not_lost():
+    """To'liq quvur: bug bo'lganda yo'nalish umuman aniqlanmas edi."""
+    r = parse_with_regex(
+        "Yukning og'irligi katta, to'g'ri shorchidan toshkentga yuk, +998901234567"
+    )
+    assert r.origin == "Sho'rchi"
+    assert r.destination == "Toshkent"
 
 
 # ---------------------------------------------------------------------------

@@ -308,16 +308,20 @@ def _strip_apostrophe(s: str) -> str:
 
 
 def _find_city_in(text: str) -> Optional[str]:
-    """Matnda eng birinchi uchragan shaharning kanonik nomini qaytaradi."""
-    tl = _norm_apostrophe(text.lower())
-    tl_stripped = _strip_apostrophe(tl)
+    """Matnda eng birinchi uchragan shaharning kanonik nomini qaytaradi.
+
+    Qidiruv HAR DOIM apostrofsiz (stripped) koordinatada bajariladi — shunda
+    "Bo'ka" va "boka" bir xil topiladi va indeks ikkita turli koordinata
+    tizimidan (apostrofli/apostrofsiz) aralashmaydi. Ilgari `tl` da
+    topilmasa `tl_stripped` dan idx olinardi, lekin uzunlik hisобi `tl`
+    bo'yicha davom etardi — bu ba'zan apostrofsiz yozilgan shaharni (masalan
+    "shorchidan") butunlay yo'qotib qo'yardi.
+    """
+    tl_stripped = _strip_apostrophe(_norm_apostrophe(text.lower()))
     best_idx = None
     best_city = None
     for alias, canon in CITY_ALIASES.items():
-        alias_n = _norm_apostrophe(alias)
-        idx = tl.find(alias_n)
-        if idx == -1:
-            idx = tl_stripped.find(_strip_apostrophe(alias_n))
+        idx = tl_stripped.find(_strip_apostrophe(_norm_apostrophe(alias)))
         if idx != -1 and (best_idx is None or idx < best_idx):
             best_idx = idx
             best_city = canon
@@ -325,11 +329,16 @@ def _find_city_in(text: str) -> Optional[str]:
 
 
 def _ordered_cities(text: str) -> list:
-    """Matndagi shaharlar paydo bo'lish tartibida (kanonik, takrorsiz)."""
-    tl = _norm_apostrophe(text.lower())
+    """Matndagi shaharlar paydo bo'lish tartibida (kanonik, takrorsiz).
+
+    `_find_city_in` kabi apostrofsiz koordinatada qidiradi — aks holda
+    apostrofli aliasning apostrofsiz yozilgan varianti (plain alias
+    ro'yxatda alohida bo'lmasa) umuman topilmay qolardi.
+    """
+    tl_stripped = _strip_apostrophe(_norm_apostrophe(text.lower()))
     hits = []
     for alias, canon in CITY_ALIASES.items():
-        idx = tl.find(_norm_apostrophe(alias))
+        idx = tl_stripped.find(_strip_apostrophe(_norm_apostrophe(alias)))
         if idx != -1:
             hits.append((idx, canon))
     hits.sort()
@@ -360,23 +369,25 @@ def _extract_route_with_preposition(text: str):
 
     Qaytaradi: (origin, dest) yoki (None, None) agar aniqlanmasa.
     """
-    tl = _norm_apostrophe(text.lower())
-    tl_stripped = _strip_apostrophe(tl)
+    # Qidiruv va suffiks tekshiruvi HAR DOIM apostrofsiz koordinatada —
+    # aks holda `idx` boshqa (apostrofli) tizimdan, `end` esa uzunligi mos
+    # kelmagan `alias_n` bilan hisoblanib, suffiks oynasi noto'g'ri joydan
+    # olinardi (apostrofsiz yozilgan shahar butunlay o'tkazib yuborilardi).
+    tl_stripped = _strip_apostrophe(_norm_apostrophe(text.lower()))
 
     origin_hits: list[tuple[int, str]] = []   # (idx, canon)
     dest_hits: list[tuple[int, str]] = []
 
     for alias, canon in CITY_ALIASES.items():
-        alias_n = _norm_apostrophe(alias)
-        idx = tl.find(alias_n)
-        if idx == -1:
-            idx = tl_stripped.find(_strip_apostrophe(alias_n))
+        alias_s = _strip_apostrophe(_norm_apostrophe(alias))
+        idx = tl_stripped.find(alias_s)
         if idx == -1:
             continue
 
-        end = idx + len(alias_n)
-        # Shahar nomidan keyin nima keladi (max 6 belgi)
-        suffix_window = tl[end: end + 8].lstrip(" \t")
+        end = idx + len(alias_s)
+        # Shahar nomidan keyin nima keladi (max 6 belgi). "g'a" muqobili
+        # apostrofsiz tekshiruvda "ga" ga tushadi — regex'da allaqachon bor.
+        suffix_window = tl_stripped[end: end + 8].lstrip(" \t")
 
         if _DEST_SUFFIX_RE.match(suffix_window):
             dest_hits.append((idx, canon))
@@ -716,8 +727,8 @@ _KICHIK_KEYWORDS = (
 )
 
 KICHIK_MAX_WEIGHT_T = 2   # <=2 tonna  -> Kichik (Porter/labo)
-ISUZU_MAX_WEIGHT_T = 10   # 2–10 tonna -> Isuzu
-FURA_MAX_WEIGHT_T = 30    # 10–30 tonna -> Fura
+ISUZU_MAX_WEIGHT_T = 10   # 2–10 tonna -> Isuzu; 10 tonnadan yuqorisi -> Fura
+# (yuqori chegara yo'q — "Fura" dan kattaroq toifa mavjud emas)
 
 
 def classify_vehicle(text: str, weight_t: Optional[float]) -> VehicleType:
