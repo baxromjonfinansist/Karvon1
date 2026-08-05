@@ -24,6 +24,7 @@ from bot.handlers import (
 )
 from bot.handlers import settings as settings_handler
 from bot.services.channel_reader import run_reader_forever, stop_reader
+from bot.services.deeplink import set_bot_username
 from bot.services.notify_service import (
     notify_loop,
     reminder_loop,
@@ -101,6 +102,9 @@ async def main() -> None:
         token=settings.BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
+    me = await bot.get_me()
+    set_bot_username(me.username)
+    log.info("Bot username: @%s", me.username)
 
     # Kanal o'quvchi — supervisor ostida: xato bo'lsa qayta ulanadi, sessiya
     # bekor bo'lsa adminga xabar beradi. `bot` kerak (ogohlantirish uchun),
