@@ -673,7 +673,7 @@ alohida test yo'q edi — shu vazifada yangi test qo'shing:
 ```python
 def test_take_kb_ichida_qongiroq_tugmasi_bor(monkeypatch):
     monkeypatch.setattr(
-        "bot.services.deeplink.build_load_deeplink",
+        "bot.services.notify_service.build_load_deeplink",
         lambda load_id: f"https://t.me/TestBot?start=load_{load_id}",
     )
     load = SimpleNamespace(id=7)
@@ -683,6 +683,23 @@ def test_take_kb_ichida_qongiroq_tugmasi_bor(monkeypatch):
     assert "📞 Qo'ng'iroq qilish" in texts
     assert "https://t.me/TestBot?start=load_7" in urls
 ```
+
+**Monkeypatch nishoni haqida (Task 5da topilgan xato):** `notify_service.py`
+`from bot.services.deeplink import build_load_deeplink` bilan nomni O'ZIGA
+bog'laydi, shu sabab `bot.services.deeplink.build_load_deeplink` ni patch
+qilish ta'sir qilmaydi — **qayerda ishlatilsa, o'sha yerda** patch qilinadi:
+`bot.services.notify_service.build_load_deeplink`. Aks holda test
+`RuntimeError: Bot username hali sozlanmagan` bilan yiqiladi (chunki
+`set_bot_username` faqat Task 7da, bot startup'ida chaqiriladi).
+
+**Diqqat — boshqa test fayllari ham buzilishi mumkin:** `_take_kb` endi
+`build_load_deeplink` ni chaqiradi, ya'ni uni bilvosita chaqiradigan har
+qanday mavjud test (masalan xabarnoma oqimini tekshiruvchi testlar)
+username sozlanmagani uchun `RuntimeError` beradi. Task 5da aynan shu
+sabab `tests/test_back_navigation.py` dagi ikkita testga monkeypatch
+qo'shishga to'g'ri keldi. To'liq suite'ni ishga tushirib, shunday
+yiqilgan testlar bo'lsa — assertion'larga TEGMASDAN, faqat yuqoridagi
+monkeypatch qatorini qo'shib tuzating.
 
 Buni faylning oxiriga (`test_xabarnoma_kartasida_yosh_bor`dan keyin) qo'shing.
 
