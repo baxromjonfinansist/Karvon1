@@ -6,8 +6,14 @@ import pytest
 from bot.services import deeplink as dl
 
 
+@pytest.fixture(autouse=True)
+def _reset_bot_username():
+    """Module global username reset after each test."""
+    yield
+    dl.set_bot_username(None)
+
+
 def test_build_load_deeplink_requires_username():
-    dl.set_bot_username(None)  # reset
     with pytest.raises(RuntimeError):
         dl.build_load_deeplink(42)
 
