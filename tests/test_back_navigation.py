@@ -271,6 +271,13 @@ def test_yuk_royxatida_orqaga_manzil_menyusiga(monkeypatch):
 
     _patch_driver(monkeypatch, get_selection_loads=selection)
     monkeypatch.setattr(driver_handlers, "_fmt_load", lambda l: "yuk")
+    # Task 5: `_take_kb(load.id, load=load)` endi telefon deep-link tugmasi
+    # uchun `build_load_deeplink`ni chaqiradi — bu test uni sinamaydi, faqat
+    # bot username sozlanmagani sabab RuntimeError'dan himoya qilamiz.
+    monkeypatch.setattr(
+        driver_handlers, "build_load_deeplink",
+        lambda load_id: f"https://t.me/TestBot?start=load_{load_id}",
+    )
     cb = FakeCallback("dst|Toshkent|fura|Samarqand")
     asyncio.run(driver_handlers.show_dest_loads(cb, FakeSession()))
 
@@ -309,6 +316,13 @@ def test_tasdiqdan_orqaga_yuk_kartasini_tiklaydi(monkeypatch):
 
     monkeypatch.setattr(driver_handlers, "get_load_detail", detail)
     monkeypatch.setattr(driver_handlers, "_fmt_load", lambda l: "yuk kartasi")
+    # Task 5: `_take_kb(load_id, load=load)` endi telefon deep-link tugmasi
+    # uchun `build_load_deeplink`ni chaqiradi — bu test uni sinamaydi, faqat
+    # bot username sozlanmagani sabab RuntimeError'dan himoya qilamiz.
+    monkeypatch.setattr(
+        driver_handlers, "build_load_deeplink",
+        lambda load_id: f"https://t.me/TestBot?start=load_{load_id}",
+    )
 
     cb = FakeCallback("takeno_42")
     asyncio.run(driver_handlers.take_decline_cb(cb, FakeSession()))

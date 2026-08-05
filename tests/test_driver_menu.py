@@ -85,3 +85,40 @@ def test_driver_kartasi_default_holatda_telefon_yashirin():
     assert "🕒 40 daqiqa oldin" in text
     assert "+998901234567" not in text
     assert "100% 1-qo'l" in text
+
+
+def test_driver_kartasi_show_phone_true_bilan_raqam_koradi():
+    load = SimpleNamespace(
+        id=1,
+        route=SimpleNamespace(origin="Toshkent", destination="Samarqand"),
+        contact_phone="+998901234567",
+        raw_text="",
+        note="Paxta",
+        cargo_type=None,
+        posted_at=datetime.utcnow() - timedelta(minutes=40),
+        first_time_phone=False,
+    )
+    text = driver_handlers._fmt_load(load, show_phone=True)
+    assert "📞 +998901234567" in text
+    assert "dispetcher" in text.lower() or "logist" in text.lower()
+
+
+def test_take_kb_load_bilan_qongiroq_tugmasi_qoshadi(monkeypatch):
+    # driver.py `build_load_deeplink`ni to'g'ridan-to'g'ri import qilgan
+    # (`from ... import ...`), shuning uchun patch shu modul nomiga qo'llanadi —
+    # `bot.services.deeplink` ga emas.
+    monkeypatch.setattr(
+        "bot.handlers.driver.build_load_deeplink",
+        lambda load_id: f"https://t.me/TestBot?start=load_{load_id}",
+    )
+    load = SimpleNamespace(id=7)
+    kb = driver_handlers._take_kb(7, load=load)
+    texts = [b.text for row in kb.inline_keyboard for b in row]
+    assert "🤝 Olish" in texts
+    assert "📞 Qo'ng'iroq qilish" in texts
+
+
+def test_take_kb_loadsiz_faqat_olish_tugmasi():
+    kb = driver_handlers._take_kb(7)
+    texts = [b.text for row in kb.inline_keyboard for b in row]
+    assert texts == ["🤝 Olish"]

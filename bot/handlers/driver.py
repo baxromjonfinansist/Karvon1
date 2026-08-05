@@ -34,6 +34,7 @@ from bot.services.load_service import (
     get_vehicle_counts_by_origin,
     take_load,
 )
+from bot.services.deeplink import build_load_deeplink
 from bot.services.rating_service import (
     get_deal_for_rating,
     get_pending_ratings,
@@ -61,17 +62,20 @@ def _fmt_price(price) -> str:
     return f"{int(price):,}".replace(",", " ") + " so'm"
 
 
-def _fmt_load(load) -> str:
+def _fmt_load(load, show_phone: bool = False) -> str:
     """Yuk kartasi — umumiy formatlovchi (feed va xabarnoma bir xil ko'rinadi)."""
-    return format_load_card(load)
+    return format_load_card(load, show_phone=show_phone)
 
 
-def _take_kb(load_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🤝 Olish", callback_data=f"take_{load_id}")]
-        ]
-    )
+def _take_kb(load_id: int, load=None) -> InlineKeyboardMarkup:
+    """Feed'dagi «Olish» tugmasi. `load` berilsa — «📞 Qo'ng'iroq qilish»
+    deep-link tugmasi ham qo'shiladi (feed'da telefon matnda emas)."""
+    rows = [[InlineKeyboardButton(text="🤝 Olish", callback_data=f"take_{load_id}")]]
+    if load is not None:
+        rows.append([InlineKeyboardButton(
+            text="📞 Qo'ng'iroq qilish", url=build_load_deeplink(load_id),
+        )])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _take_confirm_kb(load_id: int) -> InlineKeyboardMarkup:
@@ -197,7 +201,7 @@ async def _send_selection(
         f"📦 <b>{origin} → {region}</b> {label} ({start}–{end}-yuk, eng yangisidan):"
     )
     for load in loads:
-        await callback.message.answer(_fmt_load(load), reply_markup=_take_kb(load.id))
+        await callback.message.answer(_fmt_load(load), reply_markup=_take_kb(load.id, load=load))
 
     # Quyruq xabari DOIM yuboriladi — unda «⬅️ Orqaga» (manzil menyusiga) bor.
     tail = "Yana yuklar bor 👇" if has_more else "Boshqa yuk yo'q."
@@ -417,9 +421,10 @@ async def take_load_cb(callback: CallbackQuery, session: AsyncSession) -> None:
         await callback.message.edit_reply_markup(reply_markup=None)
         return
 
-    # Tasdiq so'raymiz — adashib bosishdan himoya
+    # Tasdiq so'raymiz — adashib bosishdan himoya. Driver "Olish"ni bosgan,
+    # shu sabab raqam to'g'ridan matnda ko'rsatiladi.
     await callback.message.edit_text(
-        f"{_fmt_load(load)}\n\n"
+        f"{_fmt_load(load, show_phone=True)}\n\n"
         f"❓ <b>Haqiqatan ham bu yukni olasizmi?</b>",
         reply_markup=_take_confirm_kb(load_id),
     )
@@ -449,8 +454,9 @@ async def take_confirm_cb(callback: CallbackQuery, session: AsyncSession, bot: B
     if deal is None:
         await session.rollback()
         await callback.answer("❌ Bu yuk allaqachon band qilingan.", show_alert=True)
+        # Driver "Ha, olaman" tugmasini bosgan edi — raqam matnda ko'rsatiladi.
         await callback.message.edit_text(
-            f"{_fmt_load(load)}\n\n❌ <i>Afsus, bu yuk allaqachon band qilingan.</i>",
+            f"{_fmt_load(load, show_phone=True)}\n\n❌ <i>Afsus, bu yuk allaqachon band qilingan.</i>",
             reply_markup=None,
         )
         return
@@ -462,7 +468,7 @@ async def take_confirm_cb(callback: CallbackQuery, session: AsyncSession, bot: B
     )
     # Telefon o'chib qolmasligi uchun yuk matnini saqlaymiz, faqat "olindi" ikonka qo'shamiz.
     await callback.message.edit_text(
-        f"{_fmt_load(load)}\n\n"
+        f"{_fmt_load(load, show_phone=True)}\n\n"
         f"✅ <b>Olindi</b> · Bitim #{deal.id}",
         reply_markup=None,
     )
@@ -492,8 +498,9 @@ async def take_decline_cb(callback: CallbackQuery, session: AsyncSession) -> Non
 
     load = await get_load_detail(session, load_id)
     if load and load.status == LoadStatus.open:
-        # Asl ko'rinishni "Olish" tugmasi bilan tiklaymiz
-        await callback.message.edit_text(_fmt_load(load), reply_markup=_take_kb(load_id))
+        # Asl ko'rinishni "Olish" tugmasi bilan tiklaymiz — hali olmagan,
+        # feed holatiga qaytadi (telefon tugma orqali, matnda emas).
+        await callback.message.edit_text(_fmt_load(load), reply_markup=_take_kb(load_id, load=load))
     else:
         await callback.message.edit_text(
             "Bu yuk endi mavjud emas.", reply_markup=None
