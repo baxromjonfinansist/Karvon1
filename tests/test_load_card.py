@@ -93,9 +93,9 @@ def _load(**kw) -> SimpleNamespace:
     return SimpleNamespace(**data)
 
 
-def test_kartada_yonalish_telefon_va_yosh_bor():
-    # show_phone=True — telefon standart holatda endi matnda yo'q (Task 4),
-    # bu test hali ham "reveal" holatida raqam to'g'ri chiqishini tekshiradi.
+def test_reveal_holatda_yonalish_telefon_va_yosh_bor():
+    """show_phone=True ("reveal" rejimi) — telefon standart holatda endi
+    matnda yo'q (Task 4), bu test faqat reveal holatini tekshiradi."""
     text = format_load_card(_load(), NOW, show_phone=True)
     assert "🚚 <b>Toshkent → Samarqand</b>" in text
     assert "📞 +998901234567" in text
@@ -112,8 +112,9 @@ def test_karta_html_escape_qiladi():
     assert "&lt;b&gt;" in text
 
 
-def test_karta_yonalishsiz_ham_ishlaydi():
-    # show_phone=True — route/telefon yo'q holatda ham "reveal" rejimi ishlaydi.
+def test_reveal_holatda_yonalishsiz_ham_ishlaydi():
+    """show_phone=True ("reveal" rejimi) — route/telefon yo'q holatda ham
+    ikkalasi ham "—" bilan almashtirilishini tekshiradi."""
     text = format_load_card(_load(route=None, contact_phone=None), NOW, show_phone=True)
     assert "🚚 <b>—</b>" in text
     assert "📞 —" in text
@@ -134,6 +135,7 @@ def test_fresh_oyna_6_soat():
 def test_karta_standart_holatda_telefonni_yashiradi():
     load = _load(first_time_phone=True)
     text = format_load_card(load, NOW)
+    assert "🚚 <b>Toshkent → Samarqand</b>" in text
     assert "📞" not in text
     assert load.contact_phone not in text
 
