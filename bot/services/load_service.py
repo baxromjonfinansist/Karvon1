@@ -18,15 +18,19 @@ from db.models import (
 
 log = logging.getLogger(__name__)
 
-# Telegram callback_data — 64 bayt chegara. Ba'zi menyu tugmalarida origin
-# VA destination BIRGA qatnashadi (masalan "dst|{origin}|{veh}|{region}"),
-# shu sabab har biri konservativ chegarada bo'lishi kerak — barcha real
-# viloyat/shahar nomlari (eng uzuni "Qoraqalpog'iston" ~16 bayt) bemalol
-# sig'adi. Provider "➕ Yuk joylash"da shahar nomini ERKIN matn kiritadi
-# (bot/handlers/provider.py) — kirishda ham shu chegara bilan tekshiriladi,
-# lekin eski (chegara qo'yilishidan oldingi) yozuvlar DB'da qolgan bo'lishi
-# mumkin — shu sabab menyu qurilishida ham filtrlanadi (defense-in-depth).
-MAX_REGION_NAME_BYTES = 32
+# Telegram callback_data — 64 bayt chegara. Eng qattiq shablon —
+# "more|{origin}|{vehicle}|{region}|{offset}" (bot/handlers/driver.py,
+# _pager_kb): ajratgichlar+vehicle("kichik")+offset uchun ~20 bayt ketadi,
+# qolgan ~44 bayt ORIGIN VA REGION uchun BIRGA taqsimlanadi (ikkalasi ham
+# shu bitta callback_data'da qatnashadi). Shu sabab har biri (origin HAM,
+# destination HAM) alohida shu chegarada bo'lishi kerak — 20+20=40 ≤ 44,
+# zaxira bilan. Barcha real viloyat/shahar nomlari (eng uzuni
+# "Qoraqalpog'iston" ~16 bayt) bemalol sig'adi. Provider "➕ Yuk joylash"da
+# shahar nomini ERKIN matn kiritadi (bot/handlers/provider.py) — kirishda
+# ham shu chegara bilan tekshiriladi, lekin eski (chegara qo'yilishidan
+# oldingi) yozuvlar DB'da qolgan bo'lishi mumkin — shu sabab menyu
+# qurilishida ham filtrlanadi (defense-in-depth).
+MAX_REGION_NAME_BYTES = 20
 
 
 def _drop_callback_unsafe(
