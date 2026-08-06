@@ -115,13 +115,22 @@ async def _send_main_menu(message: Message, role: UserRole) -> None:
 # ---------------------------------------------------------------------------
 
 async def _ask_role(message: Message, state: FSMContext) -> None:
-    """Rol tanlashga qaytish. Sozlamalardan kelingan bo'lsa «reregister» saqlanadi."""
+    """Rol tanlashga qaytish. Sozlamalardan kelingan bo'lsa «reregister» saqlanadi.
+
+    `pending_load_id` (deep-link orqali kutilayotgan yuk) ham saqlanishi
+    shart — aks holda user «⬅️ Orqaga» bosib rol tanlashga qaytganda uni
+    hech qachon ko'rmay ro'yxatdan o'tib qoladi (va'da qilingan raqam
+    jim yo'qoladi).
+    """
     data = await state.get_data()
     reregister = bool(data.get("reregister"))
+    pending_load_id = data.get("pending_load_id")
     await state.clear()
     if reregister:
         await state.update_data(reregister=True)
         await state.set_state(RoleChange.waiting_role)
+    if pending_load_id is not None:
+        await state.update_data(pending_load_id=pending_load_id)
     await message.answer(
         "Ro'lni tanlang:", reply_markup=role_choice_kb(with_back=reregister)
     )

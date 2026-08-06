@@ -159,3 +159,61 @@ def test_driver_phone_reveals_pending_load_then_asks_vehicle(monkeypatch):
     assert load.contact_phone in joined
     assert state.state == DriverReg.waiting_vehicle_type
     assert state.data.get("pending_load_id") is None   # tozalangan
+
+
+# ---------------------------------------------------------------------------
+# 4) ProviderReg: ro'yxatdan o'tish tugagach pending yuk ko'rsatiladi
+#    (menyu xabaridan KEYIN — spec shu tartibni talab qiladi)
+# ---------------------------------------------------------------------------
+
+def test_finish_provider_reg_reveals_pending_load_after_menu(monkeypatch):
+    load = _load()
+
+    async def fake_create_user(session, **kw):
+        return SimpleNamespace(full_name=kw["full_name"])
+
+    async def fake_get_load_detail(session, load_id):
+        assert load_id == 42
+        return load
+
+    monkeypatch.setattr(start_handlers, "create_user", fake_create_user)
+    monkeypatch.setattr(start_handlers, "get_load_detail", fake_get_load_detail)
+
+    message = FakeMessage(user_id=7)
+    state = FakeState(
+        state=None,
+        data={
+            "role": UserRole.cargo_provider.value,
+            "full_name": "Vali Aliyev",
+            "pending_load_id": 42,
+        },
+    )
+    asyncio.run(
+        start_handlers._finish_provider_reg(message, state, FakeSession(), "+998901112233")
+    )
+
+    texts = [a[0] for a in message.answers]
+    menu_idx = next(i for i, t in enumerate(texts) if "Ro'yxatdan o'tdingiz" in t)
+    reveal_idx = next(i for i, t in enumerate(texts) if load.contact_phone in t)
+    assert reveal_idx > menu_idx   # raqam "✅ Ro'yxatdan o'tdingiz!" dan KEYIN keladi
+
+
+# ---------------------------------------------------------------------------
+# 5) Orqaga (rol tanlashga) qaytilganda pending_load_id yo'qolmasligi kerak
+# ---------------------------------------------------------------------------
+
+def test_back_to_role_choice_preserves_pending_load_id():
+    """Repro: deep-link -> rol tanlandi -> ism bosqichida "⬅️ Orqaga" bosildi.
+
+    `_ask_role` (driver_name_back orqali chaqiriladi) `state.clear()` qiladi —
+    `pending_load_id` shu yerda yo'qolib qolmasligi kerak, aks holda va'da
+    qilingan raqam hech qachon ko'rsatilmaydi.
+    """
+    message = FakeMessage()
+    state = FakeState(
+        state=DriverReg.waiting_name,
+        data={"role": UserRole.driver.value, "pending_load_id": 42},
+    )
+    asyncio.run(start_handlers.driver_name_back(message, state))
+
+    assert state.data.get("pending_load_id") == 42
