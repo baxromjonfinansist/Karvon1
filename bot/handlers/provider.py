@@ -20,6 +20,7 @@ from bot.keyboards import (
     main_menu_provider_kb,
 )
 from bot.services.load_service import (
+    MAX_REGION_NAME_BYTES,
     cancel_load,
     create_load,
     get_or_create_route,
@@ -116,12 +117,29 @@ async def load_origin_back(message: Message, state: FSMContext) -> None:
     await message.answer("Bekor qilindi.", reply_markup=main_menu_provider_kb())
 
 
+def _city_input_too_long(text: str) -> bool:
+    """Shahar nomi keyinchalik menyu tugmasi callback_data'siga (masalan
+    `region_<origin>`, `dst|<origin>|<veh>|<region>`) tushadi — Telegram
+    buni 64 baytdan uzun bo'lsa butunlay rad etadi (`BUTTON_DATA_INVALID`),
+    bu esa HAMMA haydovchi uchun 📦 Yuklar bo'limini qulatib qo'yardi (real
+    voqea: provider to'liq manzil/gap yozganida). Shu sabab shahar nomi
+    kiritilganda ham cheklanadi (`MAX_REGION_NAME_BYTES`, load_service.py)."""
+    return len(text.encode("utf-8")) > MAX_REGION_NAME_BYTES
+
+
 @router.message(LoadPost.waiting_origin)
 async def load_origin(message: Message, state: FSMContext) -> None:
-    if not message.text or len(message.text.strip()) < 2:
+    text = (message.text or "").strip()
+    if len(text) < 2:
         await message.answer("Iltimos, shahar nomini to'g'ri kiriting.")
         return
-    await state.update_data(origin=message.text.strip())
+    if _city_input_too_long(text):
+        await message.answer(
+            "Shahar nomi juda uzun. Faqat shahar/tuman nomini kiriting "
+            "(masalan: Toshkent) — to'liq manzil emas."
+        )
+        return
+    await state.update_data(origin=text)
     await state.set_state(LoadPost.waiting_destination)
     await _ask_destination(message)
 
@@ -135,16 +153,23 @@ async def load_destination_back(message: Message, state: FSMContext) -> None:
 
 @router.message(LoadPost.waiting_destination)
 async def load_destination(message: Message, state: FSMContext) -> None:
-    if not message.text or len(message.text.strip()) < 2:
+    text = (message.text or "").strip()
+    if len(text) < 2:
         await message.answer("Iltimos, shahar nomini to'g'ri kiriting.")
+        return
+    if _city_input_too_long(text):
+        await message.answer(
+            "Shahar nomi juda uzun. Faqat shahar/tuman nomini kiriting "
+            "(masalan: Samarqand) — to'liq manzil emas."
+        )
         return
 
     data = await state.get_data()
-    if message.text.strip().lower() == data["origin"].lower():
+    if text.lower() == data["origin"].lower():
         await message.answer("Jo'nab ketish va yetib borish shahri bir xil bo'lishi mumkin emas.")
         return
 
-    await state.update_data(destination=message.text.strip())
+    await state.update_data(destination=text)
     await state.set_state(LoadPost.waiting_cargo_type)
     await _ask_cargo_type(message)
 

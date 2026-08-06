@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from html import escape
@@ -14,6 +15,40 @@ from db.models import (
     Deal, DealStatus, Load, LoadStatus,
     Route, User, UserRole, VehicleType, driver_preferred_routes,
 )
+
+log = logging.getLogger(__name__)
+
+# Telegram callback_data — 64 bayt chegara. Ba'zi menyu tugmalarida origin
+# VA destination BIRGA qatnashadi (masalan "dst|{origin}|{veh}|{region}"),
+# shu sabab har biri konservativ chegarada bo'lishi kerak — barcha real
+# viloyat/shahar nomlari (eng uzuni "Qoraqalpog'iston" ~16 bayt) bemalol
+# sig'adi. Provider "➕ Yuk joylash"da shahar nomini ERKIN matn kiritadi
+# (bot/handlers/provider.py) — kirishda ham shu chegara bilan tekshiriladi,
+# lekin eski (chegara qo'yilishidan oldingi) yozuvlar DB'da qolgan bo'lishi
+# mumkin — shu sabab menyu qurilishida ham filtrlanadi (defense-in-depth).
+MAX_REGION_NAME_BYTES = 32
+
+
+def _drop_callback_unsafe(
+    pairs: list[tuple[str, int]]
+) -> list[tuple[str, int]]:
+    """Callback_data'ga sig'maydigan (yoki bo'sh) nomlarni chiqarib tashlaydi.
+
+    Bitta buzuq/uzun nom butun InlineKeyboardMarkup'ni qulatib (Telegram
+    `BUTTON_DATA_INVALID`), HAMMA foydalanuvchi uchun menyuni ishlamay
+    qo'yishi mumkin edi — shu funksiya shu holatni oldini oladi: buzuq
+    yozuv shunchaki tugma sifatida ko'rsatilmaydi, qolganlar ishlayveradi.
+    """
+    safe = []
+    for name, count in pairs:
+        if name and len(name.encode("utf-8")) <= MAX_REGION_NAME_BYTES:
+            safe.append((name, count))
+        else:
+            log.warning(
+                "Region/shahar nomi callback_data uchun yaroqsiz — "
+                "menyudan o'tkazib yuborildi: %r", name,
+            )
+    return safe
 
 # Yuk faqat shuncha daqiqa "yangi" hisoblanadi — undan eskisi ko'rsatilmaydi
 # va bazadan avtomatik o'chiriladi. Feed shu oynadagi yuklarni ko'rsatadi.
@@ -229,7 +264,7 @@ async def get_origin_regions_with_open_loads(session: AsyncSession) -> list[tupl
         .group_by(Route.origin)
         .order_by(func.count(Load.id).desc())
     )
-    return [(row[0], row[1]) for row in result.all()]
+    return _drop_callback_unsafe([(row[0], row[1]) for row in result.all()])
 
 
 # Shahar/tuman -> viloyat. Manzillarni viloyat bo'yicha guruhlash uchun.
@@ -346,7 +381,7 @@ async def get_destination_regions(
     for dest, cnt in result.all():
         b = _dest_region(dest)
         buckets[b] = buckets.get(b, 0) + cnt
-    return sorted(buckets.items(), key=lambda x: -x[1])
+    return _drop_callback_unsafe(sorted(buckets.items(), key=lambda x: -x[1]))
 
 
 async def get_selection_loads(
